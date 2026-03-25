@@ -13,7 +13,7 @@ This way the output image reuses your game's existing color slots wherever possi
 
 ## Web app
 
-👉 **[Launch on GitHub Pages](https://ricardofr.github.io/megadrive-palette-toolbox/)**
+👉 **[Launch on GitHub Pages](https://ricardofr.github.io/MegaDrivePaletteToolbox/)**
 
 ## Quick start
 
