@@ -1,0 +1,7 @@
+node_modules/
+output.png
+output_preview.png
+debug.png
+palette_report.txt
+*.xml
+*.iml

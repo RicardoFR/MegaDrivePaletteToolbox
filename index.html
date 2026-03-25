@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mega Drive Palette Tool</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: 'Courier New', monospace;
+    background: #0f0f1a;
+    color: #cdd6f4;
+    min-height: 100vh;
+    padding: 20px;
+}
+
+h1 {
+    color: #89dceb;
+    font-size: 18px;
+    margin-bottom: 4px;
+    letter-spacing: 1px;
+}
+
+.subtitle { color: #6c7086; font-size: 12px; margin-bottom: 20px; }
+
+/* ── Input grid ── */
+.input-section { margin-bottom: 16px; }
+.input-section-label {
+    font-size: 11px;
+    color: #6c7086;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.input-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: flex-start;
+}
+
+.input-card {
+    background: #1e1e2e;
+    border: 2px dashed #313244;
+    border-radius: 8px;
+    padding: 12px;
+    cursor: pointer;
+    transition: border-color 0.15s;
+    min-height: 80px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+.input-card:hover { border-color: #89dceb; }
+.input-card.loaded { border-style: solid; border-color: #a6e3a1; }
+.input-card label {
+    font-size: 11px;
+    color: #6c7086;
+    margin-bottom: 6px;
+    pointer-events: none;
+}
+.input-card .hint {
+    font-size: 11px;
+    color: #45475a;
+    pointer-events: none;
+}
+.input-card canvas {
+    max-width: 100%;
+    max-height: 120px;
+    image-rendering: pixelated;
+    display: block;
+}
+.pal-canvas-wrap {
+    display: flex;
+    justify-content: center;
+    margin-top: 6px;
+}
+.pal-canvas-wrap canvas {
+    width: 160px !important;
+    height: 20px !important;
+    image-rendering: pixelated;
+}
+
+#card-input { min-width: 200px; flex: 2; }
+.pal-card   { min-width: 140px; flex: 1; }
+
+.pal-add-btn {
+    background: #1e1e2e;
+    border: 2px dashed #45475a;
+    border-radius: 8px;
+    padding: 12px;
+    min-height: 80px;
+    min-width: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 22px;
+    color: #45475a;
+    transition: border-color 0.15s, color 0.15s;
+    user-select: none;
+}
+.pal-add-btn:hover { border-color: #89dceb; color: #89dceb; }
+
+.pal-remove-btn {
+    font-size: 10px;
+    color: #f38ba8;
+    cursor: pointer;
+    margin-top: 4px;
+    background: none;
+    border: none;
+    font-family: inherit;
+    padding: 0;
+    opacity: 0.7;
+}
+.pal-remove-btn:hover { opacity: 1; }
+
+/* ── Controls ── */
+.controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.ctrl {
+    background: #1e1e2e;
+    border-radius: 6px;
+    padding: 10px 12px;
+}
+.ctrl-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: #a6adc8;
+    margin-bottom: 6px;
+}
+.ctrl-label span:last-child { color: #89dceb; font-weight: bold; }
+input[type=range] {
+    width: 100%;
+    accent-color: #89dceb;
+    cursor: pointer;
+}
+.ctrl-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: #a6adc8;
+}
+input[type=checkbox] {
+    accent-color: #89dceb;
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+}
+
+/* ── Buttons ── */
+.btn-row { display: flex; gap: 8px; margin-bottom: 16px; }
+
+button {
+    padding: 9px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: bold;
+    transition: opacity 0.15s;
+}
+button:disabled { opacity: 0.35; cursor: default; }
+.btn-primary { background: #89dceb; color: #0f0f1a; }
+.btn-primary:hover:not(:disabled) { opacity: 0.85; }
+.btn-dl { background: #313244; color: #cdd6f4; }
+.btn-dl:hover:not(:disabled) { background: #45475a; }
+
+/* ── Progress ── */
+.progress-wrap { margin-bottom: 4px; }
+.progress-bar {
+    height: 3px;
+    background: #313244;
+    border-radius: 2px;
+    overflow: hidden;
+}
+.progress-fill {
+    height: 100%;
+    background: #89dceb;
+    border-radius: 2px;
+    transition: width 0.2s;
+    width: 0%;
+}
+.status { font-size: 11px; color: #6c7086; min-height: 16px; margin-top: 3px; }
+
+/* ── Result ── */
+.result { display: none; }
+
+.result-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 8px;
+    gap: 12px;
+}
+.usage-info { font-size: 11px; color: #6c7086; white-space: nowrap; }
+
+.gen-pals { display: flex; flex-direction: column; gap: 6px; }
+.pal-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.pal-row-label { font-size: 11px; color: #6c7086; white-space: nowrap; }
+.swatches { display: flex; gap: 2px; flex-wrap: wrap; }
+.swatch {
+    width: 18px;
+    height: 18px;
+    border: 1px solid #313244;
+    border-radius: 2px;
+    cursor: help;
+}
+
+#preview {
+    display: block;
+    max-width: 100%;
+    image-rendering: pixelated;
+    border: 1px solid #313244;
+    border-radius: 4px;
+}
+
+.dl-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+
+/* ── Palette report ── */
+.pal-report-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 4px;
+}
+.pal-report-card {
+    background: #1e1e2e;
+    border-radius: 6px;
+    padding: 10px 12px;
+    min-width: 200px;
+}
+.pal-report-title {
+    font-size: 11px;
+    color: #89dceb;
+    margin-bottom: 6px;
+    font-weight: bold;
+}
+.pal-report-entry {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    line-height: 1.6;
+    color: #6c7086;
+}
+.pal-report-entry.used { color: #cdd6f4; }
+.pal-report-swatch {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+    border: 1px solid #313244;
+    flex-shrink: 0;
+}
+</style>
+</head>
+<body>
+
+<h1>MEGA DRIVE PALETTE TOOLBOX</h1>
+<p class="subtitle">N-palette tile mapper · 8×8 tiles · Bayer ordered dithering</p>
+
+<!-- ── Inputs ── -->
+<div class="input-section">
+    <div class="input-section-label">Input image + fixed palettes</div>
+    <div class="input-grid" id="input-grid">
+        <div class="input-card" id="card-input" onclick="document.getElementById('fi-input').click()">
+            <input type="file" id="fi-input" accept="image/*" style="display:none">
+            <label>INPUT IMAGE</label>
+            <canvas id="cv-input" style="display:none"></canvas>
+            <span class="hint" id="hint-input">click or drop image</span>
+        </div>
+        <!-- fixed palette cards injected here by JS -->
+        <div class="pal-add-btn" id="btn-add-pal" title="Add fixed palette">+</div>
+    </div>
+</div>
+
+<!-- ── Controls ── -->
+<div class="controls">
+    <div class="ctrl">
+        <div class="ctrl-label"><span>Dither strength</span><span id="v-dither">20</span></div>
+        <input type="range" id="sl-dither" min="0" max="60" value="20"
+               oninput="document.getElementById('v-dither').textContent=this.value">
+    </div>
+    <div class="ctrl">
+        <div class="ctrl-label"><span>Residual threshold</span><span id="v-residual">3600</span></div>
+        <input type="range" id="sl-residual" min="500" max="15000" step="100" value="3600"
+               oninput="document.getElementById('v-residual').textContent=this.value">
+    </div>
+    <div class="ctrl">
+        <div class="ctrl-label"><span>Iterations</span><span id="v-iter">6</span></div>
+        <input type="range" id="sl-iter" min="1" max="12" value="6"
+               oninput="document.getElementById('v-iter').textContent=this.value">
+    </div>
+    <div class="ctrl">
+        <div class="ctrl-label"><span>Generate palettes</span><span id="v-generate">1</span></div>
+        <input type="range" id="sl-generate" min="1" max="4" value="1"
+               oninput="document.getElementById('v-generate').textContent=this.value">
+    </div>
+    <div class="ctrl" style="display:flex;align-items:center;justify-content:center">
+        <label class="ctrl-check">
+            <input type="checkbox" id="cb-smooth" checked>
+            Tile smoothing
+        </label>
+    </div>
+</div>
+
+<!-- ── Process button ── -->
+<div class="btn-row">
+    <button class="btn-primary" id="btn-run" disabled>&#9654; PROCESS</button>
+</div>
+
+<!-- ── Progress ── -->
+<div class="progress-wrap">
+    <div class="progress-bar"><div class="progress-fill" id="prog-fill"></div></div>
+    <div class="status" id="status-text"></div>
+</div>
+
+<!-- ── Result ── -->
+<div class="result" id="result">
+    <div class="result-header">
+        <div class="gen-pals" id="gen-pals"></div>
+        <div class="usage-info" id="usage-info"></div>
+    </div>
+
+    <canvas id="preview"></canvas>
+
+    <div class="dl-row">
+        <button class="btn-dl" id="btn-preview">&#8595; Preview PNG</button>
+        <button class="btn-dl" id="btn-indexed">&#8595; Indexed PNG (SGDK)</button>
+        <button class="btn-dl" id="btn-debug">&#8595; Debug (tile map)</button>
+        <button class="btn-dl" id="btn-report">&#8595; Palette report</button>
+    </div>
+
+    <div id="pal-report" style="margin-top:14px;"></div>
+</div>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────── //
+const state = {
+    inputData:   null,   // ImageData
+    fixedPals:   [],     // [{colors: [[r,g,b]×15], id: number}]
+    worker:      null,
+    result:      null,
+    nextPalId:   0,
+};
+
+// ── Fixed palette management ─────────────────────────────────────────────── //
+function addPaletteCard() {
+    const id   = state.nextPalId++;
+    const name = `pal${id}`;
+
+    const card = document.createElement('div');
+    card.className  = 'input-card pal-card';
+    card.id         = `zone-${name}`;
+
+    const fi = document.createElement('input');
+    fi.type   = 'file';
+    fi.accept = 'image/*';
+    fi.id     = `fi-${name}`;
+    fi.style.display = 'none';
+
+    const lbl = document.createElement('label');
+    lbl.textContent = `FIXED PAL ${state.fixedPals.length}`;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'pal-canvas-wrap';
+    const cv = document.createElement('canvas');
+    cv.id    = `cv-${name}`;
+    cv.style.display = 'none';
+    wrap.appendChild(cv);
+
+    const hint = document.createElement('span');
+    hint.className   = 'hint';
+    hint.id          = `hint-${name}`;
+    hint.textContent = 'click or drop palette';
+
+    const rmBtn = document.createElement('button');
+    rmBtn.className   = 'pal-remove-btn';
+    rmBtn.textContent = '✕ remove';
+    rmBtn.onclick     = (e) => { e.stopPropagation(); removePaletteCard(id, card); };
+
+    card.appendChild(fi);
+    card.appendChild(lbl);
+    card.appendChild(wrap);
+    card.appendChild(hint);
+    card.appendChild(rmBtn);
+    card.onclick = () => fi.click();
+
+    fi.addEventListener('change', e => {
+        if (e.target.files[0]) handlePaletteFile(id, name, e.target.files[0]);
+    });
+    setupDrop(card, file => handlePaletteFile(id, name, file));
+
+    const grid   = document.getElementById('input-grid');
+    const addBtn = document.getElementById('btn-add-pal');
+    grid.insertBefore(card, addBtn);
+
+    state.fixedPals.push({ id, colors: null });
+    renumberPaletteLabels();
+    checkReady();
+    return id;
+}
+
+function removePaletteCard(id, card) {
+    card.remove();
+    state.fixedPals = state.fixedPals.filter(p => p.id !== id);
+    renumberPaletteLabels();
+    checkReady();
+}
+
+function renumberPaletteLabels() {
+    state.fixedPals.forEach((p, i) => {
+        const zone = document.getElementById(`zone-pal${p.id}`);
+        if (zone) zone.querySelector('label').textContent = `FIXED PAL ${i}`;
+    });
+}
+
+async function handlePaletteFile(id, name, file) {
+    try {
+        const imageData = await readImageData(file, `cv-${name}`);
+        document.getElementById(`cv-${name}`).style.display   = 'block';
+        document.getElementById(`hint-${name}`).style.display = 'none';
+        document.getElementById(`zone-${name}`).classList.add('loaded');
+        const colors = extractPaletteColors(imageData);
+        const entry  = state.fixedPals.find(p => p.id === id);
+        if (entry) entry.colors = colors;
+        checkReady();
+    } catch (err) { console.error(err); }
+}
+
+document.getElementById('btn-add-pal').addEventListener('click', addPaletteCard);
+
+// Bootstrap two palette slots
+addPaletteCard();
+addPaletteCard();
+
+// ── File loading ──────────────────────────────────────────────────────────── //
+function readImageData(file, canvasId) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = e => {
+            const img = new Image();
+            img.onload = () => {
+                const cv = document.getElementById(canvasId);
+                cv.width  = img.width;
+                cv.height = img.height;
+                const ctx = cv.getContext('2d');
+                ctx.drawImage(img, 0, 0);
+                resolve(ctx.getImageData(0, 0, img.width, img.height));
+            };
+            img.onerror = reject;
+            img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+    });
+}
+
+function extractPaletteColors(imageData) {
+    const { data, width, height } = imageData;
+    const horiz  = width >= height;
+    const colors = [];
+    for (let i = 1; i < 16; i++) {
+        const x   = horiz ? i : 0;
+        const y   = horiz ? 0 : i;
+        const idx = (y * width + x) * 4;
+        colors.push([data[idx], data[idx + 1], data[idx + 2]]);
+    }
+    return colors;
+}
+
+function setupDrop(zone, handler) {
+    zone.addEventListener('dragover',  e => { e.preventDefault(); zone.style.borderColor = '#89dceb'; });
+    zone.addEventListener('dragleave', () => zone.style.borderColor = '');
+    zone.addEventListener('drop', e => {
+        e.preventDefault();
+        zone.style.borderColor = '';
+        if (e.dataTransfer.files[0]) handler(e.dataTransfer.files[0]);
+    });
+}
+
+function checkReady() {
+    document.getElementById('btn-run').disabled = !state.inputData;
+}
+
+// Input image
+const fiInput   = document.getElementById('fi-input');
+const zoneInput = document.getElementById('card-input');
+
+fiInput.addEventListener('change', e => {
+    if (e.target.files[0]) handleInputFile(e.target.files[0]);
+});
+setupDrop(zoneInput, handleInputFile);
+
+async function handleInputFile(file) {
+    try {
+        const imageData = await readImageData(file, 'cv-input');
+        document.getElementById('cv-input').style.display   = 'block';
+        document.getElementById('hint-input').style.display = 'none';
+        document.getElementById('card-input').classList.add('loaded');
+        state.inputData = imageData;
+        checkReady();
+    } catch (err) { console.error(err); }
+}
+
+// ── Processing ────────────────────────────────────────────────────────────── //
+document.getElementById('btn-run').addEventListener('click', () => {
+    if (state.worker) state.worker.terminate();
+
+    const btn = document.getElementById('btn-run');
+    btn.disabled = true;
+    document.getElementById('result').style.display = 'none';
+    document.getElementById('prog-fill').style.width = '0%';
+
+    state.worker = new Worker('worker.js');
+
+    state.worker.onmessage = e => {
+        const msg = e.data;
+        if (msg.type === 'progress') {
+            document.getElementById('prog-fill').style.width = msg.pct + '%';
+            document.getElementById('status-text').textContent = msg.text;
+        } else if (msg.type === 'done') {
+            onResult(msg);
+            btn.disabled = false;
+        } else if (msg.type === 'error') {
+            document.getElementById('status-text').textContent = '✗ ' + msg.message;
+            btn.disabled = false;
+        }
+    };
+
+    state.worker.onerror = err => {
+        document.getElementById('status-text').textContent = '✗ Error: ' + err.message;
+        btn.disabled = false;
+    };
+
+    state.worker.postMessage({
+        inputData:        state.inputData.data,
+        fixedPaletteColors: state.fixedPals.filter(p => p.colors !== null).map(p => p.colors),
+        numGenerate:      parseInt(document.getElementById('sl-generate').value),
+        options: {
+            W:              state.inputData.width,
+            H:              state.inputData.height,
+            ditherStrength: parseInt(document.getElementById('sl-dither').value),
+            residualThr:    Math.sqrt(parseInt(document.getElementById('sl-residual').value)),
+            maxIter:        parseInt(document.getElementById('sl-iter').value),
+            doSmooth:       document.getElementById('cb-smooth').checked,
+        },
+    });
+});
+
+function onResult(msg) {
+    state.result = msg;
+
+    // Preview canvas
+    const cv  = document.getElementById('preview');
+    cv.width  = msg.W;
+    cv.height = msg.H;
+    cv.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(msg.outRgb.buffer), msg.W, msg.H), 0, 0);
+
+    // Generated palette swatches
+    const genWrap = document.getElementById('gen-pals');
+    genWrap.innerHTML = '';
+    msg.generatedPaletteColors.forEach((cols, g) => {
+        const row   = document.createElement('div');
+        row.className = 'pal-row';
+        const lbl  = document.createElement('span');
+        lbl.className   = 'pal-row-label';
+        lbl.textContent = `GEN${g}:`;
+        row.appendChild(lbl);
+        const sw = document.createElement('div');
+        sw.className = 'swatches';
+        for (const [r, gv, b] of cols) {
+            const d = document.createElement('div');
+            d.className = 'swatch';
+            d.style.background = `rgb(${r},${gv},${b})`;
+            d.title = `RGB(${r}, ${gv}, ${b})`;
+            sw.appendChild(d);
+        }
+        row.appendChild(sw);
+        genWrap.appendChild(row);
+    });
+
+    // Tile usage
+    const total = msg.usage.reduce((a, b) => a + b, 0);
+    const pct   = i => total ? Math.round(100 * msg.usage[i] / total) : 0;
+    const parts = [];
+    for (let i = 0; i < msg.numGenerate; i++) parts.push(`GEN${i} ${pct(i)}%`);
+    for (let i = 0; i < msg.numFixed;    i++) parts.push(`FIX${i} ${pct(msg.numGenerate + i)}%`);
+    document.getElementById('usage-info').textContent = parts.join('  ') + `  (${total} tiles)`;
+
+    // Palette report
+    const reportEl = document.getElementById('pal-report');
+    reportEl.innerHTML = '';
+    const grid = document.createElement('div');
+    grid.className = 'pal-report-grid';
+    for (let pi = 0; pi < msg.palettes.length; pi++) {
+        const label = pi < msg.numGenerate ? `GEN${pi}` : `FIX${pi - msg.numGenerate}`;
+        const pal   = msg.palettes[pi];
+        const used  = msg.colorUsed[pi];
+        const count = Array.from(used).slice(1).filter(Boolean).length;
+        const card  = document.createElement('div');
+        card.className = 'pal-report-card';
+        const title = document.createElement('div');
+        title.className   = 'pal-report-title';
+        title.textContent = `${label} — ${count}/15 used  (${pct(pi)}% tiles)`;
+        card.appendChild(title);
+        for (let ci = 1; ci < 16; ci++) {
+            const [r, gv, b] = pal[ci];
+            const entry = document.createElement('div');
+            entry.className = 'pal-report-entry' + (used[ci] ? ' used' : '');
+            const sw = document.createElement('div');
+            sw.className = 'pal-report-swatch';
+            sw.style.background = `rgb(${r},${gv},${b})`;
+            entry.appendChild(sw);
+            entry.appendChild(document.createTextNode(
+                `[${String(ci).padStart(2)}] ${used[ci] ? '✓' : '·'}  RGB(${r}, ${gv}, ${b})`
+            ));
+            card.appendChild(entry);
+        }
+        grid.appendChild(card);
+    }
+    reportEl.appendChild(grid);
+
+    document.getElementById('result').style.display = 'block';
+    document.getElementById('status-text').textContent = `Done · ${msg.W}×${msg.H}`;
+}
+
+function buildReportText(msg) {
+    const total = msg.usage.reduce((a, b) => a + b, 0);
+    const pct   = i => total ? Math.round(100 * msg.usage[i] / total) : 0;
+    const lines = [];
+    for (let pi = 0; pi < msg.palettes.length; pi++) {
+        const label = pi < msg.numGenerate ? `GEN${pi}` : `FIX${pi - msg.numGenerate}`;
+        const pal   = msg.palettes[pi];
+        const used  = msg.colorUsed[pi];
+        const count = Array.from(used).slice(1).filter(Boolean).length;
+        lines.push(`${label} — ${count}/15 colors used  (${pct(pi)}% of tiles)`);
+        for (let ci = 1; ci < 16; ci++) {
+            const [r, g, b] = pal[ci];
+            const tick = used[ci] ? '✓' : '·';
+            lines.push(`  [${String(ci).padStart(2)}] ${tick}  RGB(${String(r).padStart(3)}, ${String(g).padStart(3)}, ${String(b).padStart(3)})`);
+        }
+        lines.push('');
+    }
+    return lines.join('\n');
+}
+
+// ── Downloads ─────────────────────────────────────────────────────────────── //
+function downloadBlob(blob, filename) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+document.getElementById('btn-preview').addEventListener('click', () => {
+    document.getElementById('preview').toBlob(b => downloadBlob(b, 'output_preview.png'));
+});
+
+document.getElementById('btn-indexed').addEventListener('click', () => {
+    if (!state.result) return;
+    downloadBlob(new Blob([state.result.indexedPng], { type: 'image/png' }), 'output.png');
+});
+
+document.getElementById('btn-report').addEventListener('click', () => {
+    if (!state.result) return;
+    downloadBlob(new Blob([buildReportText(state.result)], { type: 'text/plain' }), 'palette_report.txt');
+});
+
+document.getElementById('btn-debug').addEventListener('click', () => {
+    if (!state.result) return;
+    const cv = Object.assign(document.createElement('canvas'), { width: state.result.W, height: state.result.H });
+    cv.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(state.result.debugData.buffer), state.result.W, state.result.H), 0, 0);
+    cv.toBlob(b => downloadBlob(b, 'debug_tilemap.png'));
+});
+</script>
+</body>
+</html>
