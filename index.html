@@ -224,10 +224,10 @@ button:disabled { opacity: 0.35; cursor: default; }
 
 #preview {
     display: block;
-    max-width: 100%;
     image-rendering: pixelated;
     border: 1px solid #313244;
     border-radius: 4px;
+    zoom: 2;
 }
 
 .dl-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
@@ -267,6 +267,60 @@ button:disabled { opacity: 0.35; cursor: default; }
     border: 1px solid #313244;
     flex-shrink: 0;
 }
+
+/* ── Resize section ── */
+.resize-section {
+    margin-bottom: 16px;
+    background: #1e1e2e;
+    border: 1px solid #313244;
+    border-radius: 8px;
+    padding: 10px 14px;
+}
+.resize-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: #6c7086;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    cursor: pointer;
+    user-select: none;
+}
+.resize-toggle input[type=checkbox] { cursor: pointer; accent-color: #89dceb; }
+.resize-body {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+}
+.resize-orig { font-size: 11px; color: #6c7086; white-space: nowrap; }
+.resize-arrow { color: #6c7086; font-size: 13px; }
+.resize-inputs { display: flex; align-items: center; gap: 6px; }
+.resize-inputs input[type=number] {
+    width: 70px;
+    background: #181825;
+    border: 1px solid #45475a;
+    border-radius: 4px;
+    color: #cdd6f4;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 4px 6px;
+    text-align: center;
+}
+.resize-inputs input[type=number]:focus { outline: none; border-color: #89dceb; }
+.resize-sep { color: #6c7086; font-size: 13px; }
+.resize-lock {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: #6c7086;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.resize-lock input[type=checkbox] { cursor: pointer; accent-color: #89dceb; }
 </style>
 </head>
 <body>
@@ -289,11 +343,33 @@ button:disabled { opacity: 0.35; cursor: default; }
     </div>
 </div>
 
+<!-- ── Resize (step 2, optional) ── -->
+<div class="resize-section" id="resize-section" style="display:none">
+    <label class="resize-toggle">
+        <input type="checkbox" id="cb-resize" onchange="onResizeToggle()">
+        Resize image (optional)
+    </label>
+    <div class="resize-body" id="resize-body" style="display:none">
+        <span class="resize-orig" id="resize-orig"></span>
+        <span class="resize-arrow">→</span>
+        <div class="resize-inputs">
+            <input type="number" id="inp-resize-w" min="8" max="2048" step="8"
+                   oninput="onResizeWChange()">
+            <span class="resize-sep">×</span>
+            <input type="number" id="inp-resize-h" min="8" max="2048" step="8"
+                   oninput="onResizeHChange()">
+        </div>
+        <label class="resize-lock">
+            <input type="checkbox" id="cb-aspect" checked> lock ratio
+        </label>
+    </div>
+</div>
+
 <!-- ── Controls ── -->
 <div class="controls">
     <div class="ctrl">
-        <div class="ctrl-label"><span>Dither strength</span><span id="v-dither">20</span></div>
-        <input type="range" id="sl-dither" min="0" max="60" value="20"
+        <div class="ctrl-label"><span>Dither strength</span><span id="v-dither">0</span></div>
+        <input type="range" id="sl-dither" min="0" max="60" value="0"
                oninput="document.getElementById('v-dither').textContent=this.value">
     </div>
     <div class="ctrl">
@@ -308,8 +384,13 @@ button:disabled { opacity: 0.35; cursor: default; }
     </div>
     <div class="ctrl">
         <div class="ctrl-label"><span>Generate palettes</span><span id="v-generate">1</span></div>
-        <input type="range" id="sl-generate" min="1" max="4" value="1"
-               oninput="document.getElementById('v-generate').textContent=this.value">
+        <input type="range" id="sl-generate" min="0" max="4" value="1"
+               oninput="document.getElementById('v-generate').textContent=this.value; updateGenerateMax(); checkReady()">
+    </div>
+    <div class="ctrl">
+        <div class="ctrl-label"><span>Palette affinity</span><span id="v-fixed-bias">80</span></div>
+        <input type="range" id="sl-fixed-bias" min="0" max="100" value="80"
+               oninput="document.getElementById('v-fixed-bias').textContent=this.value">
     </div>
     <div class="ctrl" style="display:flex;align-items:center;justify-content:center">
         <label class="ctrl-check">
@@ -412,6 +493,7 @@ function addPaletteCard() {
 
     state.fixedPals.push({ id, colors: null });
     renumberPaletteLabels();
+    updateGenerateMax();
     checkReady();
     return id;
 }
@@ -420,6 +502,7 @@ function removePaletteCard(id, card) {
     card.remove();
     state.fixedPals = state.fixedPals.filter(p => p.id !== id);
     renumberPaletteLabels();
+    updateGenerateMax();
     checkReady();
 }
 
@@ -441,6 +524,18 @@ async function handlePaletteFile(id, name, file) {
         if (entry) entry.colors = colors;
         checkReady();
     } catch (err) { console.error(err); }
+}
+
+function updateGenerateMax() {
+    const maxGen = Math.min(4, Math.max(0, 4 - state.fixedPals.length));
+    const sl = document.getElementById('sl-generate');
+    sl.max = maxGen;
+    if (parseInt(sl.value) > maxGen) {
+        sl.value = maxGen;
+        document.getElementById('v-generate').textContent = maxGen;
+    }
+    document.getElementById('btn-add-pal').style.display =
+        state.fixedPals.length >= 4 ? 'none' : '';
 }
 
 document.getElementById('btn-add-pal').addEventListener('click', addPaletteCard);
@@ -494,7 +589,10 @@ function setupDrop(zone, handler) {
 }
 
 function checkReady() {
-    document.getElementById('btn-run').disabled = !state.inputData;
+    const hasInput    = !!state.inputData;
+    const numGenerate = parseInt(document.getElementById('sl-generate').value);
+    const numFixed    = state.fixedPals.filter(p => p.colors !== null).length;
+    document.getElementById('btn-run').disabled = !hasInput || (numGenerate === 0 && numFixed === 0);
 }
 
 // Input image
@@ -513,8 +611,60 @@ async function handleInputFile(file) {
         document.getElementById('hint-input').style.display = 'none';
         document.getElementById('card-input').classList.add('loaded');
         state.inputData = imageData;
+        showResizeSection(imageData.width, imageData.height);
         checkReady();
     } catch (err) { console.error(err); }
+}
+
+// ── Resize step ───────────────────────────────────────────────────────────── //
+function showResizeSection(w, h) {
+    document.getElementById('resize-section').style.display = '';
+    document.getElementById('resize-orig').textContent = `original: ${w}×${h}`;
+    document.getElementById('inp-resize-w').value = w;
+    document.getElementById('inp-resize-h').value = h;
+    // Reset toggle when a new image is loaded
+    document.getElementById('cb-resize').checked = false;
+    document.getElementById('resize-body').style.display = 'none';
+}
+
+function onResizeToggle() {
+    const on = document.getElementById('cb-resize').checked;
+    document.getElementById('resize-body').style.display = on ? '' : 'none';
+}
+
+function onResizeWChange() {
+    if (!document.getElementById('cb-aspect').checked) return;
+    const orig = state.inputData;
+    if (!orig) return;
+    const w = parseInt(document.getElementById('inp-resize-w').value) || orig.width;
+    document.getElementById('inp-resize-h').value = Math.max(8, Math.round(w * orig.height / orig.width));
+}
+
+function onResizeHChange() {
+    if (!document.getElementById('cb-aspect').checked) return;
+    const orig = state.inputData;
+    if (!orig) return;
+    const h = parseInt(document.getElementById('inp-resize-h').value) || orig.height;
+    document.getElementById('inp-resize-w').value = Math.max(8, Math.round(h * orig.width / orig.height));
+}
+
+function getResizedImageData() {
+    if (!document.getElementById('cb-resize').checked) return state.inputData;
+    const targetW = Math.max(8, parseInt(document.getElementById('inp-resize-w').value) || state.inputData.width);
+    const targetH = Math.max(8, parseInt(document.getElementById('inp-resize-h').value) || state.inputData.height);
+    if (targetW === state.inputData.width && targetH === state.inputData.height) return state.inputData;
+    const srcCv = document.createElement('canvas');
+    srcCv.width  = state.inputData.width;
+    srcCv.height = state.inputData.height;
+    srcCv.getContext('2d').putImageData(state.inputData, 0, 0);
+    const dstCv = document.createElement('canvas');
+    dstCv.width  = targetW;
+    dstCv.height = targetH;
+    const ctx = dstCv.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(srcCv, 0, 0, targetW, targetH);
+    return ctx.getImageData(0, 0, targetW, targetH);
 }
 
 // ── Processing ────────────────────────────────────────────────────────────── //
@@ -547,16 +697,18 @@ document.getElementById('btn-run').addEventListener('click', () => {
         btn.disabled = false;
     };
 
+    const imageData = getResizedImageData();
     state.worker.postMessage({
-        inputData:        state.inputData.data,
+        inputData:        imageData.data,
         fixedPaletteColors: state.fixedPals.filter(p => p.colors !== null).map(p => p.colors),
         numGenerate:      parseInt(document.getElementById('sl-generate').value),
         options: {
-            W:              state.inputData.width,
-            H:              state.inputData.height,
+            W:              imageData.width,
+            H:              imageData.height,
             ditherStrength: parseInt(document.getElementById('sl-dither').value),
             residualThr:    Math.sqrt(parseInt(document.getElementById('sl-residual').value)),
             maxIter:        parseInt(document.getElementById('sl-iter').value),
+            fixedBias:      parseInt(document.getElementById('sl-fixed-bias').value) / 100,
             doSmooth:       document.getElementById('cb-smooth').checked,
         },
     });
