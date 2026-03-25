@@ -126,7 +126,10 @@ function buildPal0(samples) {
 }
 
 // ── Tile assignment ───────────────────────────────────────────────────────── //
-function assignTiles(imageData, palettes, W, H) {
+// A fixed palette only wins a tile if it beats the best generated palette by
+// at least 20%. This prevents fixed palettes from stealing tiles via marginal
+// color matches (e.g. a sprite palette's white snatching bright sky tiles).
+function assignTiles(imageData, palettes, W, H, numGenerate, fixedBias) {
     const TX = Math.floor(W / TILE), TY = Math.floor(H / TILE);
     const tileMap = new Uint8Array(TY * TX);
     for (let ty = 0; ty < TY; ty++) {
@@ -138,10 +141,15 @@ function assignTiles(imageData, palettes, W, H) {
                     flat.push(imageData[i], imageData[i + 1], imageData[i + 2]);
                 }
             }
-            let minD = Infinity, minPi = 0;
-            for (let pi = 0; pi < palettes.length; pi++) {
+            let bestGenD = Infinity, bestGenPi = 0;
+            for (let pi = 0; pi < numGenerate; pi++) {
                 const d = tileDist(palettes[pi], flat);
-                if (d < minD) { minD = d; minPi = pi; }
+                if (d < bestGenD) { bestGenD = d; bestGenPi = pi; }
+            }
+            let minD = bestGenD, minPi = bestGenPi;
+            for (let pi = numGenerate; pi < palettes.length; pi++) {
+                const d = tileDist(palettes[pi], flat);
+                if (d < minD * fixedBias) { minD = d; minPi = pi; }
             }
             tileMap[ty * TX + tx] = minPi;
         }
@@ -197,8 +205,12 @@ function enforceRowMajority(tileMap, imageData, palettes, TX, TY, W) {
         }
         const winnerDist = rowTileDist(ty, winner);
 
-        // Only enforce if the winner isn't more than 40% worse than mixed.
-        if (winnerDist <= mixedDist * 1.4) {
+        // Only enforce if:
+        // 1. Winner has a clear majority (>60% of tiles in the row)
+        // 2. Winner's quality is within 15% of the per-tile optimal
+        const winnerVotes = votes[winner];
+        const majority = winnerVotes / TX;
+        if (majority > 0.6 && winnerDist <= mixedDist * 1.15) {
             for (let tx = 0; tx < TX; tx++) m[ty * TX + tx] = winner;
         }
     }
@@ -340,9 +352,12 @@ async function encodeIndexedPNG(W, H, indices, rgbPalette, deflate) {
 //   slots 0..numGenerate-1          → generated palettes
 //   slots numGenerate..total-1      → fixed palettes (same order as input)
 //
-async function processImage({ inputData, fixedPaletteColors, numGenerate, W, H, ditherStrength, residualThr, maxIter, doSmooth }, deflate, onProgress) {
-    if (!numGenerate || numGenerate < 1) numGenerate = 1;
+async function processImage({ inputData, fixedPaletteColors, numGenerate, W, H, ditherStrength, residualThr, maxIter, doSmooth, fixedBias }, deflate, onProgress) {
+    if (fixedBias === undefined) fixedBias = 0.8;
+    if (!numGenerate || numGenerate < 0) numGenerate = 0;
     const fixedPalettes = (fixedPaletteColors || []).map(cols => [[0, 0, 0], ...cols]);
+    numGenerate = Math.min(numGenerate, Math.max(0, 4 - fixedPalettes.length));
+    if (numGenerate === 0 && fixedPalettes.length === 0) numGenerate = 1;
     const totalPalettes = numGenerate + fixedPalettes.length;
 
     onProgress(5, 'Analyzing coverage...');
@@ -364,25 +379,28 @@ async function processImage({ inputData, fixedPaletteColors, numGenerate, W, H, 
         [inputData[i * 4], inputData[i * 4 + 1], inputData[i * 4 + 2]]);
     const initSamples = residualPixels.length >= N_PAL_COLORS ? residualPixels : allPixels;
 
-    onProgress(15, `Building ${numGenerate} palette(s) (${residualPixels.length} residual px)...`);
+    let genPalettes = [];
+    if (numGenerate > 0) {
+        onProgress(15, `Building ${numGenerate} palette(s) (${residualPixels.length} residual px)...`);
 
-    // Initialize generated palettes with different seeds to avoid symmetry.
-    // Sort residual samples by brightness and split into numGenerate groups.
-    const sorted = initSamples.slice().sort((a, b) => (a[0]+a[1]+a[2]) - (b[0]+b[1]+b[2]));
-    const groupSize = Math.ceil(sorted.length / numGenerate);
-    let genPalettes = Array.from({ length: numGenerate }, (_, g) => {
-        const group = sorted.slice(g * groupSize, (g + 1) * groupSize);
-        return buildPal0(group.length >= N_PAL_COLORS ? group : initSamples);
-    });
+        // Initialize generated palettes with different seeds to avoid symmetry.
+        // Sort residual samples by brightness and split into numGenerate groups.
+        const sorted = initSamples.slice().sort((a, b) => (a[0]+a[1]+a[2]) - (b[0]+b[1]+b[2]));
+        const groupSize = Math.ceil(sorted.length / numGenerate);
+        genPalettes = Array.from({ length: numGenerate }, (_, g) => {
+            const group = sorted.slice(g * groupSize, (g + 1) * groupSize);
+            return buildPal0(group.length >= N_PAL_COLORS ? group : initSamples);
+        });
+    }
 
     // palettes array: [gen0, gen1, ..., fixed0, fixed1, ...]
     let palettes = [...genPalettes, ...fixedPalettes];
     let tileMap, TX, TY;
 
     // Iterative refinement: assign tiles → rebuild each generated palette.
-    for (let iter = 1; iter <= maxIter; iter++) {
+    for (let iter = 1; iter <= (numGenerate > 0 ? maxIter : 0); iter++) {
         onProgress(15 + (iter / maxIter) * 55, `Iteration ${iter}/${maxIter}...`);
-        ({ tileMap, TX, TY } = assignTiles(inputData, palettes, W, H));
+        ({ tileMap, TX, TY } = assignTiles(inputData, palettes, W, H, numGenerate, fixedBias));
 
         const genPixels = Array.from({ length: numGenerate }, () => []);
         for (let ty = 0; ty < TY; ty++) {
@@ -407,12 +425,14 @@ async function processImage({ inputData, fixedPaletteColors, numGenerate, W, H, 
         if (changed) palettes = [...genPalettes, ...fixedPalettes];
     }
 
-    // ── Row-majority palette enforcement ─────────────────────────────────── //
+    // ── Row-majority palette enforcement + tile smoothing ────────────────── //
     if (doSmooth) {
         onProgress(73, 'Enforcing row palette bands...');
         tileMap = enforceRowMajority(tileMap, inputData, palettes, TX, TY, W);
+        onProgress(77, 'Smoothing tile islands...');
+        tileMap = smoothTileMap(tileMap, inputData, palettes, TX, TY, W);
 
-        // Rebuild each generated palette after row enforcement
+        // Rebuild each generated palette after smoothing
         const genPixels = Array.from({ length: numGenerate }, () => []);
         for (let ty = 0; ty < TY; ty++) {
             for (let tx = 0; tx < TX; tx++) {
