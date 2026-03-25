@@ -39,12 +39,24 @@ function tileDist(palette, flat) {
     return sum;
 }
 
+// ── Seeded PRNG (mulberry32) — ensures deterministic results ─────────────── //
+function makePrng(seed) {
+    let s = seed >>> 0;
+    return function () {
+        s += 0x6D2B79F5;
+        let t = Math.imul(s ^ (s >>> 15), 1 | s);
+        t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
 // ── K-means++ palette generation ─────────────────────────────────────────── //
-function kmeans(samples, k, maxIter) {
+function kmeans(samples, k, maxIter, rng) {
     if (maxIter === undefined) maxIter = 30;
+    if (!rng) rng = Math.random.bind(Math);
     if (samples.length === 0) return Array.from({ length: k }, () => [0, 0, 0]);
 
-    const centers = [samples[Math.floor(Math.random() * samples.length)].slice()];
+    const centers = [samples[Math.floor(rng() * samples.length)].slice()];
     while (centers.length < k) {
         const dists = samples.map(p => {
             let minD = Infinity;
@@ -53,7 +65,7 @@ function kmeans(samples, k, maxIter) {
         });
         const total = dists.reduce((a, b) => a + b, 0);
         if (total === 0) { centers.push(samples[0].slice()); continue; }
-        let r = Math.random() * total;
+        let r = rng() * total;
         let idx = 0;
         for (; idx < dists.length - 1 && r > 0; idx++) r -= dists[idx];
         centers.push(samples[idx].slice());
@@ -98,8 +110,15 @@ function snapToMD(c) {
     return c.map(v => Math.round(Math.round(v * 7 / 255) * 255 / 7));
 }
 
-// ── Build PAL0: [[0,0,0], ...15 generated colors] ────────────────────────── //
-function buildPal0(samples) {
+// ── Build palette: inherit useful fixed colors, fill rest with K-means ───── //
+//
+// Phase 1 — Inherit: fixed palette colors that cover samples within thr2 are
+//   reused in the generated palette (snapped to MD grid, deduped). This makes
+//   GEN share boundary colors with FIX palettes → seamless tile transitions.
+// Phase 2 — Fill: remaining slots are filled with K-means on pixels still not
+//   well covered by the inherited colors.
+//
+function buildPal0(samples, rng, inheritCandidates, thr2) {
     const MAX_SAMPLES = 8000;
     let s = samples;
     if (samples.length > MAX_SAMPLES) {
@@ -107,21 +126,49 @@ function buildPal0(samples) {
         s = samples.filter((_, i) => i % step === 0);
     }
 
-    // Run K-means, snap to MD grid, deduplicate.
-    // If snapping collapsed some centers into duplicates, run a second pass
-    // with more clusters and fill the gaps until we have N_PAL_COLORS unique colors.
-    const seen = new Set();
-    const unique = [];
-    let k = N_PAL_COLORS;
-    for (let attempt = 0; attempt < 3 && unique.length < N_PAL_COLORS; attempt++) {
-        for (const c of kmeans(s, k).map(snapToMD)) {
+    const seenKeys = new Set();
+    const unique   = [];
+
+    // ── Phase 1: inherit fixed colors with coverage in this sample set ─────── //
+    if (inheritCandidates && inheritCandidates.length > 0 && thr2 > 0) {
+        const scored = [];
+        const scoredSeen = new Set();
+        for (const raw of inheritCandidates) {
+            const c   = snapToMD(raw);
             const key = c[0] * 65536 + c[1] * 256 + c[2];
-            if (!seen.has(key)) { seen.add(key); unique.push(c); }
-            if (unique.length === N_PAL_COLORS) break;
+            if (scoredSeen.has(key)) continue;
+            scoredSeen.add(key);
+            let count = 0;
+            for (const p of s) { if (dist2(p, c) <= thr2) count++; }
+            if (count > 0) scored.push({ c, key, count });
         }
-        k = N_PAL_COLORS + (N_PAL_COLORS - unique.length) * 2; // ask for more next time
+        scored.sort((a, b) => b.count - a.count);
+        for (const { c, key } of scored) {
+            if (unique.length >= N_PAL_COLORS) break;
+            seenKeys.add(key);
+            unique.push(c);
+        }
     }
 
+    // ── Phase 2: K-means on pixels not covered by inherited colors ─────────── //
+    const residual = unique.length > 0
+        ? s.filter(p => { for (const c of unique) { if (dist2(p, c) <= (thr2 || 0)) return false; } return true; })
+        : s;
+
+    const base = residual.length >= (N_PAL_COLORS - unique.length) ? residual : s;
+    let k = N_PAL_COLORS - unique.length;
+    for (let attempt = 0; attempt < 3 && unique.length < N_PAL_COLORS; attempt++) {
+        if (k <= 0) break;
+        for (const c of kmeans(base, k, 30, rng).map(snapToMD)) {
+            const key = c[0] * 65536 + c[1] * 256 + c[2];
+            if (!seenKeys.has(key)) { seenKeys.add(key); unique.push(c); }
+            if (unique.length === N_PAL_COLORS) break;
+        }
+        k = (N_PAL_COLORS - unique.length) * 2;
+    }
+
+    // Pad with black if we couldn't fill all slots (rare edge case)
+    while (unique.length < N_PAL_COLORS) unique.push([0, 0, 0]);
     return [[0, 0, 0], ...unique];
 }
 
@@ -341,6 +388,83 @@ async function encodeIndexedPNG(W, H, indices, rgbPalette, deflate) {
     return out;
 }
 
+// ── Collect pixels assigned to each generated palette from a tile map ────── //
+function collectGenPixels(tileMap, inputData, TX, TY, W, numGenerate) {
+    const genPixels = Array.from({ length: numGenerate }, () => []);
+    for (let ty = 0; ty < TY; ty++) {
+        for (let tx = 0; tx < TX; tx++) {
+            const pi = tileMap[ty * TX + tx];
+            if (pi >= numGenerate) continue;
+            for (let dy = 0; dy < TILE; dy++)
+                for (let dx = 0; dx < TILE; dx++) {
+                    const i = ((ty * TILE + dy) * W + (tx * TILE + dx)) * 4;
+                    genPixels[pi].push([inputData[i], inputData[i + 1], inputData[i + 2]]);
+                }
+        }
+    }
+    return genPixels;
+}
+
+// ── Rebuild generated palettes from their assigned pixels ─────────────────── //
+function rebuildGenPalettes(genPalettes, genPixels, rng, allFixedColors, thr2) {
+    return genPalettes.map((pal, g) =>
+        genPixels[g].length >= N_PAL_COLORS
+            ? buildPal0(genPixels[g], rng, allFixedColors, thr2)
+            : pal
+    );
+}
+
+// ── Build 256-entry PLTE byte array from palette list ─────────────────────── //
+function buildRgbPalette(palettes) {
+    const out = new Uint8Array(256 * 3);
+    for (let pi = 0; pi < palettes.length; pi++) {
+        const pal = palettes[pi];
+        for (let ci = 0; ci < 16; ci++) {
+            const b = (pi * 16 + ci) * 3;
+            out[b] = pal[ci][0]; out[b + 1] = pal[ci][1]; out[b + 2] = pal[ci][2];
+        }
+    }
+    return out;
+}
+
+// ── Build debug tilemap image (one hue per palette) ───────────────────────── //
+function buildDebugImage(tileMap, TX, TY, W, H, totalPalettes) {
+    const DBG_HUES = [0, 120, 240, 60, 180, 300, 30, 150];
+    function hueToRgb(h) {
+        const s = 0.7, l = 0.55;
+        const c = (1 - Math.abs(2 * l - 1)) * s;
+        const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+        const m = l - c / 2;
+        let r, g, b;
+        if (h < 60)       { r = c; g = x; b = 0; }
+        else if (h < 120) { r = x; g = c; b = 0; }
+        else if (h < 180) { r = 0; g = c; b = x; }
+        else if (h < 240) { r = 0; g = x; b = c; }
+        else if (h < 300) { r = x; g = 0; b = c; }
+        else              { r = c; g = 0; b = x; }
+        return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255), 255];
+    }
+    const colors = Array.from({ length: totalPalettes }, (_, i) => hueToRgb(DBG_HUES[i % DBG_HUES.length]));
+    const out = new Uint8ClampedArray(W * H * 4);
+    for (let ty = 0; ty < TY; ty++)
+        for (let tx = 0; tx < TX; tx++) {
+            const col = colors[tileMap[ty * TX + tx]];
+            for (let dy = 0; dy < TILE; dy++)
+                for (let dx = 0; dx < TILE; dx++)
+                    out.set(col, ((ty * TILE + dy) * W + (tx * TILE + dx)) * 4);
+        }
+    return out;
+}
+
+// ── Count tile and color usage per palette ────────────────────────────────── //
+function buildUsageStats(tileMap, outIdx, totalPalettes) {
+    const usage = new Array(totalPalettes).fill(0);
+    for (let i = 0; i < tileMap.length; i++) usage[tileMap[i]]++;
+    const colorUsed = Array.from({ length: totalPalettes }, () => new Uint8Array(16));
+    for (let i = 0; i < outIdx.length; i++) colorUsed[outIdx[i] >> 4][outIdx[i] & 0xF] = 1;
+    return { usage, colorUsed };
+}
+
 // ── Main pipeline (shared by CLI and browser) ─────────────────────────────── //
 //
 // fixedPaletteColors : [[r,g,b]×15][]  — array of fixed (input) palettes
@@ -352,160 +476,69 @@ async function encodeIndexedPNG(W, H, indices, rgbPalette, deflate) {
 //   slots 0..numGenerate-1          → generated palettes
 //   slots numGenerate..total-1      → fixed palettes (same order as input)
 //
-async function processImage({ inputData, fixedPaletteColors, numGenerate, W, H, ditherStrength, residualThr, maxIter, doSmooth, fixedBias }, deflate, onProgress) {
+async function processImage({ inputData, fixedPaletteColors, numGenerate, W, H, ditherStrength, residualThr, maxIter, doSmooth, fixedBias, seed }, deflate, onProgress) {
     if (fixedBias === undefined) fixedBias = 0.8;
+    const rng = makePrng(seed !== undefined ? seed : 1);
     if (!numGenerate || numGenerate < 0) numGenerate = 0;
     const fixedPalettes = (fixedPaletteColors || []).map(cols => [[0, 0, 0], ...cols]);
     numGenerate = Math.min(numGenerate, Math.max(0, 4 - fixedPalettes.length));
     if (numGenerate === 0 && fixedPalettes.length === 0) numGenerate = 1;
     const totalPalettes = numGenerate + fixedPalettes.length;
-
-    onProgress(5, 'Analyzing coverage...');
-
     const thr2 = residualThr * residualThr;
+    const allFixedColors = fixedPalettes.flatMap(pal => pal.slice(1));
 
-    // Residual pixels: not well covered by ANY fixed palette.
-    // These seed the generated palettes' initial K-means.
-    const residualPixels = [];
-    for (let i = 0; i < W * H; i++) {
-        const p = [inputData[i * 4], inputData[i * 4 + 1], inputData[i * 4 + 2]];
-        let dMin = Infinity;
-        for (const pal of fixedPalettes)
-            for (let j = 1; j < pal.length; j++) dMin = Math.min(dMin, dist2(p, pal[j]));
-        if (dMin > thr2) residualPixels.push(p);
-    }
-
+    // ── Residual analysis ──────────────────────────────────────────────────── //
+    onProgress(5, 'Analyzing coverage...');
     const allPixels = Array.from({ length: W * H }, (_, i) =>
         [inputData[i * 4], inputData[i * 4 + 1], inputData[i * 4 + 2]]);
+    const residualPixels = allPixels.filter(p => {
+        for (const pal of fixedPalettes)
+            for (let j = 1; j < pal.length; j++) if (dist2(p, pal[j]) <= thr2) return false;
+        return true;
+    });
     const initSamples = residualPixels.length >= N_PAL_COLORS ? residualPixels : allPixels;
 
+    // ── Initial palette generation ─────────────────────────────────────────── //
     let genPalettes = [];
     if (numGenerate > 0) {
         onProgress(15, `Building ${numGenerate} palette(s) (${residualPixels.length} residual px)...`);
-
-        // Initialize generated palettes with different seeds to avoid symmetry.
-        // Sort residual samples by brightness and split into numGenerate groups.
-        const sorted = initSamples.slice().sort((a, b) => (a[0]+a[1]+a[2]) - (b[0]+b[1]+b[2]));
+        const sorted = initSamples.slice().sort((a, b) => (a[0] + a[1] + a[2]) - (b[0] + b[1] + b[2]));
         const groupSize = Math.ceil(sorted.length / numGenerate);
         genPalettes = Array.from({ length: numGenerate }, (_, g) => {
             const group = sorted.slice(g * groupSize, (g + 1) * groupSize);
-            return buildPal0(group.length >= N_PAL_COLORS ? group : initSamples);
+            return buildPal0(group.length >= N_PAL_COLORS ? group : initSamples, rng, allFixedColors, thr2);
         });
     }
 
-    // palettes array: [gen0, gen1, ..., fixed0, fixed1, ...]
+    // ── Iterative refinement: assign tiles → rebuild palettes ─────────────── //
     let palettes = [...genPalettes, ...fixedPalettes];
     let tileMap, TX, TY;
 
-    // Iterative refinement: assign tiles → rebuild each generated palette.
     for (let iter = 1; iter <= (numGenerate > 0 ? maxIter : 0); iter++) {
         onProgress(15 + (iter / maxIter) * 55, `Iteration ${iter}/${maxIter}...`);
         ({ tileMap, TX, TY } = assignTiles(inputData, palettes, W, H, numGenerate, fixedBias));
-
-        const genPixels = Array.from({ length: numGenerate }, () => []);
-        for (let ty = 0; ty < TY; ty++) {
-            for (let tx = 0; tx < TX; tx++) {
-                const pi = tileMap[ty * TX + tx];
-                if (pi >= numGenerate) continue; // fixed palette tile
-                for (let dy = 0; dy < TILE; dy++) {
-                    for (let dx = 0; dx < TILE; dx++) {
-                        const i = ((ty * TILE + dy) * W + (tx * TILE + dx)) * 4;
-                        genPixels[pi].push([inputData[i], inputData[i + 1], inputData[i + 2]]);
-                    }
-                }
-            }
-        }
-        let changed = false;
-        for (let g = 0; g < numGenerate; g++) {
-            if (genPixels[g].length >= N_PAL_COLORS) {
-                genPalettes[g] = buildPal0(genPixels[g]);
-                changed = true;
-            }
-        }
-        if (changed) palettes = [...genPalettes, ...fixedPalettes];
+        genPalettes = rebuildGenPalettes(genPalettes, collectGenPixels(tileMap, inputData, TX, TY, W, numGenerate), rng, allFixedColors, thr2);
+        palettes = [...genPalettes, ...fixedPalettes];
     }
 
-    // ── Row-majority palette enforcement + tile smoothing ────────────────── //
+    // ── Spatial smoothing ──────────────────────────────────────────────────── //
     if (doSmooth) {
         onProgress(73, 'Enforcing row palette bands...');
         tileMap = enforceRowMajority(tileMap, inputData, palettes, TX, TY, W);
         onProgress(77, 'Smoothing tile islands...');
         tileMap = smoothTileMap(tileMap, inputData, palettes, TX, TY, W);
-
-        // Rebuild each generated palette after smoothing
-        const genPixels = Array.from({ length: numGenerate }, () => []);
-        for (let ty = 0; ty < TY; ty++) {
-            for (let tx = 0; tx < TX; tx++) {
-                const pi = tileMap[ty * TX + tx];
-                if (pi >= numGenerate) continue;
-                for (let dy = 0; dy < TILE; dy++) {
-                    for (let dx = 0; dx < TILE; dx++) {
-                        const i = ((ty * TILE + dy) * W + (tx * TILE + dx)) * 4;
-                        genPixels[pi].push([inputData[i], inputData[i + 1], inputData[i + 2]]);
-                    }
-                }
-            }
-        }
-        let changed = false;
-        for (let g = 0; g < numGenerate; g++) {
-            if (genPixels[g].length >= N_PAL_COLORS) {
-                genPalettes[g] = buildPal0(genPixels[g]);
-                changed = true;
-            }
-        }
-        if (changed) palettes = [...genPalettes, ...fixedPalettes];
+        genPalettes = rebuildGenPalettes(genPalettes, collectGenPixels(tileMap, inputData, TX, TY, W, numGenerate), rng, allFixedColors, thr2);
+        palettes = [...genPalettes, ...fixedPalettes];
     }
 
+    // ── Render + encode ────────────────────────────────────────────────────── //
     onProgress(80, 'Rendering (Bayer dither)...');
     const { outRgb, outIdx } = renderBayer(inputData, W, H, tileMap, palettes, TX, ditherStrength);
 
     onProgress(90, 'Encoding PNG...');
-    const rgbPalette = new Uint8Array(256 * 3);
-    for (let pi = 0; pi < totalPalettes; pi++) {
-        const pal = palettes[pi];
-        for (let ci = 0; ci < 16; ci++) {
-            const b = (pi * 16 + ci) * 3;
-            rgbPalette[b] = pal[ci][0]; rgbPalette[b + 1] = pal[ci][1]; rgbPalette[b + 2] = pal[ci][2];
-        }
-    }
-    const indexedPng = await encodeIndexedPNG(W, H, outIdx, rgbPalette, deflate);
-
-    // Debug: assign a distinct hue to each palette slot
-    const debugData = new Uint8ClampedArray(W * H * 4);
-    const DBG_HUES = [0, 120, 240, 60, 180, 300, 30, 150]; // hue degrees
-    function hueToRgb(h) {
-        const s = 0.7, l = 0.55;
-        const c = (1 - Math.abs(2*l - 1)) * s;
-        const x = c * (1 - Math.abs((h / 60) % 2 - 1));
-        const m = l - c/2;
-        let r, g, b;
-        if (h < 60)       { r=c; g=x; b=0; }
-        else if (h < 120) { r=x; g=c; b=0; }
-        else if (h < 180) { r=0; g=c; b=x; }
-        else if (h < 240) { r=0; g=x; b=c; }
-        else if (h < 300) { r=x; g=0; b=c; }
-        else              { r=c; g=0; b=x; }
-        return [Math.round((r+m)*255), Math.round((g+m)*255), Math.round((b+m)*255), 255];
-    }
-    const DBG = Array.from({ length: totalPalettes }, (_, i) => hueToRgb(DBG_HUES[i % DBG_HUES.length]));
-    for (let ty = 0; ty < TY; ty++) {
-        for (let tx = 0; tx < TX; tx++) {
-            const pi = tileMap[ty * TX + tx];
-            for (let dy = 0; dy < TILE; dy++)
-                for (let dx = 0; dx < TILE; dx++)
-                    debugData.set(DBG[pi], ((ty * TILE + dy) * W + (tx * TILE + dx)) * 4);
-        }
-    }
-
-    const usage = new Array(totalPalettes).fill(0);
-    for (let i = 0; i < tileMap.length; i++) usage[tileMap[i]]++;
-
-    // Count which color indices are actually used per palette
-    const colorUsed = Array.from({ length: totalPalettes }, () => new Uint8Array(16));
-    for (let i = 0; i < outIdx.length; i++) {
-        const v = outIdx[i];
-        colorUsed[v >> 4][v & 0xF] = 1;
-    }
+    const indexedPng = await encodeIndexedPNG(W, H, outIdx, buildRgbPalette(palettes), deflate);
+    const debugData  = buildDebugImage(tileMap, TX, TY, W, H, totalPalettes);
+    const { usage, colorUsed } = buildUsageStats(tileMap, outIdx, totalPalettes);
 
     return {
         outRgb, outIdx, indexedPng, debugData,

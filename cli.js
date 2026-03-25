@@ -20,7 +20,8 @@
  *   RESIDUAL=3600    Residual threshold² (default 3600)
  *   ITERS=6          Refinement iterations (default 6)
  *   SMOOTH=1         Tile smoothing (1=on, 0=off, default 1)
- *   GENERATE=1       Number of palettes to generate (default 1)
+ *   GENERATE=1       Number of palettes to generate (default 1, 0 = only fixed palettes)
+ *   FIXED_BIAS=80    Fixed palette affinity 0-100 (0=never use fixed, 100=use if marginally better, default 80)
  */
 
 const { Jimp }       = require('jimp');
@@ -41,11 +42,13 @@ const INPUT_PATH = args[0];
 const OUT_DIR    = args[args.length - 1];
 const PAL_PATHS  = args.slice(1, -1);
 
-const DITHER_STRENGTH = parseInt(process.env.DITHER    ?? '20');
+const DITHER_STRENGTH = parseInt(process.env.DITHER    ?? '0');
 const RESIDUAL_THR    = Math.sqrt(parseInt(process.env.RESIDUAL ?? '3600'));
 const MAX_ITER        = parseInt(process.env.ITERS      ?? '6');
 const DO_SMOOTH       = (process.env.SMOOTH   ?? '1') !== '0';
-const NUM_GENERATE    = parseInt(process.env.GENERATE  ?? '1');
+const NUM_GENERATE    = parseInt(process.env.GENERATE   ?? '1');
+const FIXED_BIAS      = parseInt(process.env.FIXED_BIAS ?? '80') / 100;
+const SEED            = parseInt(process.env.SEED       ?? '1');
 
 // ── deflate: Node.js zlib ─────────────────────────────────────────────────── //
 function deflate(data) {
@@ -59,7 +62,7 @@ async function main() {
     console.log(`Input:    ${INPUT_PATH}`);
     PAL_PATHS.forEach((p, i) => console.log(`Fixed[${i}]: ${p}`));
     console.log(`Output:   ${OUT_DIR}`);
-    console.log(`Generate: ${NUM_GENERATE}  Dither: ${DITHER_STRENGTH}  Residual: ${RESIDUAL_THR.toFixed(0)}  Iters: ${MAX_ITER}  Smooth: ${DO_SMOOTH}`);
+    console.log(`Generate: ${NUM_GENERATE}  Dither: ${DITHER_STRENGTH}  Residual: ${RESIDUAL_THR.toFixed(0)}  Iters: ${MAX_ITER}  Smooth: ${DO_SMOOTH}  Seed: ${SEED}`);
     console.log('');
 
     process.stdout.write('Loading images...');
@@ -89,7 +92,7 @@ async function main() {
     const result = await processImage(
         { inputData, fixedPaletteColors, numGenerate: NUM_GENERATE, W, H,
           ditherStrength: DITHER_STRENGTH, residualThr: RESIDUAL_THR,
-          maxIter: MAX_ITER, doSmooth: DO_SMOOTH },
+          maxIter: MAX_ITER, doSmooth: DO_SMOOTH, fixedBias: FIXED_BIAS, seed: SEED },
         deflate,
         (pct, text) => {
             if (pct !== lastPct) { process.stdout.write(`\r${text.padEnd(50)}`); lastPct = pct; }
