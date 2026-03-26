@@ -1,5 +1,13 @@
 'use strict';
 
+// ── image-q (Node.js via require, browser via imageQ global) ─────────────── //
+let _iq = null;
+if (typeof require !== 'undefined') {
+    try { _iq = require('image-q'); } catch (e) {}
+} else if (typeof imageQ !== 'undefined') {
+    _iq = imageQ;
+}
+
 // ── Constants ─────────────────────────────────────────────────────────────── //
 const TILE = 8;
 const N_PAL_COLORS = 15;
@@ -13,8 +21,54 @@ const BAYER4 = [
     [15,  7, 13,  5],
 ];
 
-// ── Color distance: perceptual weighted RGB ───────────────────────────────── //
+// ── sRGB → linear lookup table (256 entries) ─────────────────────────────── //
+const LINEAR = new Float32Array(256);
+for (let i = 0; i < 256; i++) {
+    const v = i / 255;
+    LINEAR[i] = v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+}
+
+// ── RGB → OKLab ───────────────────────────────────────────────────────────── //
+// Inputs may be floats (e.g. after error diffusion) — round to nearest integer
+// before the lookup table access (Float32Array[float] returns undefined in JS).
+function rgbToOklab(r, g, b) {
+    const lr = LINEAR[(r + 0.5) | 0], lg = LINEAR[(g + 0.5) | 0], lb = LINEAR[(b + 0.5) | 0];
+    const l = Math.cbrt(0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb);
+    const m = Math.cbrt(0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb);
+    const s = Math.cbrt(0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb);
+    return [
+        0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+        1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+        0.0259040371 * l + 0.4784205430 * m - 0.5043165098 * s,
+    ];
+}
+
+// ── OKLab → sRGB ──────────────────────────────────────────────────────────── //
+function oklabToRgb(L, a, b) {
+    const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+    const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+    const s_ = L - 0.0894841775 * a - 1.2914855480 * b;
+    const l = l_ * l_ * l_, m = m_ * m_ * m_, s = s_ * s_ * s_;
+    const lr =  4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
+    const lg = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
+    const lb = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s;
+    function delinearize(v) {
+        v = Math.max(0, Math.min(1, v));
+        return Math.round(255 * (v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055));
+    }
+    return [delinearize(lr), delinearize(lg), delinearize(lb)];
+}
+
+// ── Color distance: perceptual (OKLab) — used for matching and clustering ─── //
 function dist2(a, b) {
+    const [L1, a1, b1] = rgbToOklab(a[0], a[1], a[2]);
+    const [L2, a2, b2] = rgbToOklab(b[0], b[1], b[2]);
+    const dL = L1 - L2, da = a1 - a2, db = b1 - b2;
+    return dL * dL + da * da + db * db;
+}
+
+// ── Coverage distance: weighted RGB — keeps RESIDUAL threshold in its original scale ─ //
+function coverDist2(a, b) {
     const dr = a[0] - b[0], dg = a[1] - b[1], db = a[2] - b[2];
     return 2 * dr * dr + 4 * dg * dg + db * db;
 }
@@ -50,34 +104,44 @@ function makePrng(seed) {
     };
 }
 
-// ── K-means++ palette generation ─────────────────────────────────────────── //
+// ── K-means++ palette generation (works in OKLab space) ──────────────────── //
 function kmeans(samples, k, maxIter, rng) {
     if (maxIter === undefined) maxIter = 30;
     if (!rng) rng = Math.random.bind(Math);
     if (samples.length === 0) return Array.from({ length: k }, () => [0, 0, 0]);
 
-    const centers = [samples[Math.floor(rng() * samples.length)].slice()];
+    // Convert samples to OKLab for perceptually uniform clustering
+    const lab = samples.map(p => rgbToOklab(p[0], p[1], p[2]));
+
+    function labDist2(a, b) {
+        const dL = a[0] - b[0], da = a[1] - b[1], db = a[2] - b[2];
+        return dL * dL + da * da + db * db;
+    }
+
+    // k-means++ seeding in OKLab space
+    const centers = [lab[Math.floor(rng() * lab.length)].slice()];
     while (centers.length < k) {
-        const dists = samples.map(p => {
+        const dists = lab.map(p => {
             let minD = Infinity;
-            for (const c of centers) { const d = dist2(p, c); if (d < minD) minD = d; }
+            for (const c of centers) { const d = labDist2(p, c); if (d < minD) minD = d; }
             return minD;
         });
         const total = dists.reduce((a, b) => a + b, 0);
-        if (total === 0) { centers.push(samples[0].slice()); continue; }
+        if (total === 0) { centers.push(lab[0].slice()); continue; }
         let r = rng() * total;
         let idx = 0;
         for (; idx < dists.length - 1 && r > 0; idx++) r -= dists[idx];
-        centers.push(samples[idx].slice());
+        centers.push(lab[idx].slice());
     }
 
+    // Iterate: assign + update centroids in OKLab space
     for (let iter = 0; iter < maxIter; iter++) {
         const sums = Array.from({ length: k }, () => [0, 0, 0]);
         const counts = new Int32Array(k);
-        for (const p of samples) {
+        for (const p of lab) {
             let minD = Infinity, minI = 0;
             for (let i = 0; i < k; i++) {
-                const d = dist2(p, centers[i]);
+                const d = labDist2(p, centers[i]);
                 if (d < minD) { minD = d; minI = i; }
             }
             sums[minI][0] += p[0];
@@ -89,9 +153,9 @@ function kmeans(samples, k, maxIter, rng) {
         for (let i = 0; i < k; i++) {
             if (counts[i] > 0) {
                 const nc = [
-                    Math.round(sums[i][0] / counts[i]),
-                    Math.round(sums[i][1] / counts[i]),
-                    Math.round(sums[i][2] / counts[i]),
+                    sums[i][0] / counts[i],
+                    sums[i][1] / counts[i],
+                    sums[i][2] / counts[i],
                 ];
                 if (nc[0] !== centers[i][0] || nc[1] !== centers[i][1] || nc[2] !== centers[i][2]) {
                     centers[i] = nc;
@@ -101,13 +165,37 @@ function kmeans(samples, k, maxIter, rng) {
         }
         if (!changed) break;
     }
-    return centers;
+
+    // Convert OKLab centers back to RGB
+    return centers.map(c => oklabToRgb(c[0], c[1], c[2]));
 }
 
 // ── Snap an RGB color to the nearest Mega Drive 9-bit color ─────────────── //
 // MD has 3 bits per channel → 8 levels: round(n * 255/7) for n = 0..7
 function snapToMD(c) {
     return c.map(v => Math.round(Math.round(v * 7 / 255) * 255 / 7));
+}
+
+// ── Wu's color quantization on MD-snapped pixels (Node.js) ───────────────── //
+// Pre-snapping the input guarantees all output colors land on the MD grid,
+// eliminating duplicates and wasted slots that post-snap causes.
+// Falls back to k-means when image-q is unavailable (browser).
+function wuQuantMD(samples, k, rng) {
+    if (!_iq || k <= 0 || samples.length < k) {
+        return kmeans(samples, k, 30, rng).map(snapToMD);
+    }
+    // Snap every sample to the MD grid first
+    const snapped = samples.map(snapToMD);
+    const buf = new Uint8Array(snapped.length * 4);
+    for (let i = 0; i < snapped.length; i++) {
+        buf[i * 4]     = snapped[i][0];
+        buf[i * 4 + 1] = snapped[i][1];
+        buf[i * 4 + 2] = snapped[i][2];
+        buf[i * 4 + 3] = 255;
+    }
+    const container = _iq.utils.PointContainer.fromUint8Array(buf, snapped.length, 1);
+    const palette   = _iq.buildPaletteSync([container], { colors: k, paletteQuantization: 'wuquant' });
+    return palette.getPointContainer().getPointArray().map(p => [p.r, p.g, p.b]);
 }
 
 // ── Build palette: inherit useful fixed colors, fill rest with K-means ───── //
@@ -139,7 +227,7 @@ function buildPal0(samples, rng, inheritCandidates, thr2) {
             if (scoredSeen.has(key)) continue;
             scoredSeen.add(key);
             let count = 0;
-            for (const p of s) { if (dist2(p, c) <= thr2) count++; }
+            for (const p of s) { if (coverDist2(p, c) <= thr2) count++; }
             if (count > 0) scored.push({ c, key, count });
         }
         scored.sort((a, b) => b.count - a.count);
@@ -150,21 +238,19 @@ function buildPal0(samples, rng, inheritCandidates, thr2) {
         }
     }
 
-    // ── Phase 2: K-means on pixels not covered by inherited colors ─────────── //
+    // ── Phase 2: WuQuant on pixels not covered by inherited colors ────────── //
     const residual = unique.length > 0
-        ? s.filter(p => { for (const c of unique) { if (dist2(p, c) <= (thr2 || 0)) return false; } return true; })
+        ? s.filter(p => { for (const c of unique) { if (coverDist2(p, c) <= (thr2 || 0)) return false; } return true; })
         : s;
 
-    const base = residual.length >= (N_PAL_COLORS - unique.length) ? residual : s;
-    let k = N_PAL_COLORS - unique.length;
-    for (let attempt = 0; attempt < 3 && unique.length < N_PAL_COLORS; attempt++) {
-        if (k <= 0) break;
-        for (const c of kmeans(base, k, 30, rng).map(snapToMD)) {
+    const k    = N_PAL_COLORS - unique.length;
+    const base = residual.length >= k ? residual : s;
+    if (k > 0) {
+        for (const c of wuQuantMD(base, k, rng)) {
             const key = c[0] * 65536 + c[1] * 256 + c[2];
             if (!seenKeys.has(key)) { seenKeys.add(key); unique.push(c); }
             if (unique.length === N_PAL_COLORS) break;
         }
-        k = (N_PAL_COLORS - unique.length) * 2;
     }
 
     // Pad with black if we couldn't fill all slots (rare edge case)
@@ -254,10 +340,27 @@ function enforceRowMajority(tileMap, imageData, palettes, TX, TY, W) {
 
         // Only enforce if:
         // 1. Winner has a clear majority (>60% of tiles in the row)
-        // 2. Winner's quality is within 15% of the per-tile optimal
+        // 2. Winner's quality is within 10% of the per-tile optimal
+        // 3. No individual tile would be degraded more than 2x
         const winnerVotes = votes[winner];
         const majority = winnerVotes / TX;
-        if (majority > 0.6 && winnerDist <= mixedDist * 1.15) {
+        if (majority <= 0.6 || winnerDist > mixedDist * 1.10) continue;
+
+        let worstTileRatio = 1.0;
+        for (let tx = 0; tx < TX; tx++) {
+            const pi = m[ty * TX + tx];
+            if (pi === winner) continue;
+            const flat = [];
+            for (let dy = 0; dy < TILE; dy++)
+                for (let dx = 0; dx < TILE; dx++) {
+                    const i = ((ty * TILE + dy) * W + (tx * TILE + dx)) * 4;
+                    flat.push(imageData[i], imageData[i + 1], imageData[i + 2]);
+                }
+            const curD = tileDist(palettes[pi], flat);
+            const winD = tileDist(palettes[winner], flat);
+            if (curD > 0) worstTileRatio = Math.max(worstTileRatio, winD / curD);
+        }
+        if (worstTileRatio <= 2.0) {
             for (let tx = 0; tx < TX; tx++) m[ty * TX + tx] = winner;
         }
     }
@@ -304,7 +407,7 @@ function smoothTileMap(tileMap, imageData, palettes, TX, TY, W) {
                 // Switch if majority of neighbors use a different palette.
                 // Tolerance scales with isolation: a tile surrounded on all sides
                 // is forced to match (high tolerance) to eliminate palette islands.
-                const tolerance = voteCount >= 4 ? 999 : voteCount >= 3 ? 3.0 : voteCount >= 2 ? 1.6 : 1.4;
+                const tolerance = voteCount >= 4 ? 4.0 : voteCount >= 3 ? 3.0 : voteCount >= 2 ? 1.6 : 1.4;
                 const flat = getTileFlat(ty, tx);
                 if (tileDist(palettes[candidate], flat) <= tileDist(palettes[pi], flat) * tolerance) {
                     m[ty * TX + tx] = candidate;
@@ -314,10 +417,99 @@ function smoothTileMap(tileMap, imageData, palettes, TX, TY, W) {
         }
         if (!changed) break;
     }
+
+    // ── Final cleanup: remove remaining completely isolated tiles ─────────── //
+    // Tiles that survived the main loop are just outside the 4.0 tolerance.
+    // A second pass with a higher cap (8.0) catches these near-boundary cases
+    // and eliminates visible 8×8 squares without allowing truly wrong colours.
+    for (let ty = 0; ty < TY; ty++) {
+        for (let tx = 0; tx < TX; tx++) {
+            const pi        = m[ty * TX + tx];
+            const neighbors = [];
+            if (ty > 0)      neighbors.push(m[(ty - 1) * TX + tx]);
+            if (ty < TY - 1) neighbors.push(m[(ty + 1) * TX + tx]);
+            if (tx > 0)      neighbors.push(m[ty * TX + (tx - 1)]);
+            if (tx < TX - 1) neighbors.push(m[ty * TX + (tx + 1)]);
+            if (neighbors.length < 4) continue; // only interior tiles
+            if (neighbors.every(n => n === neighbors[0]) && neighbors[0] !== pi) {
+                const candidate = neighbors[0];
+                const flat = getTileFlat(ty, tx);
+                if (tileDist(palettes[candidate], flat) <= tileDist(palettes[pi], flat) * 8.0) {
+                    m[ty * TX + tx] = candidate;
+                }
+            }
+        }
+    }
+
     return m;
 }
 
+// ── Floyd-Steinberg error diffusion render ────────────────────────────────── //
+// Error propagates across the whole image; each pixel uses its tile's palette.
+// This gives much better visual quality than ordered dithering for static images.
+function renderFloydSteinberg(imageData, W, H, tileMap, palettes, TX, strength) {
+    const outRgb = new Uint8ClampedArray(W * H * 4);
+    const outIdx = new Uint8Array(W * H);
+    const errR   = new Float32Array(W * H);
+    const errG   = new Float32Array(W * H);
+    const errB   = new Float32Array(W * H);
+    const s = Math.max(0, Math.min(1, strength));
+
+    for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+            const pi      = tileMap[Math.floor(y / TILE) * TX + Math.floor(x / TILE)];
+            const palette = palettes[pi];
+            const src     = (y * W + x) * 4;
+            const idx     = y * W + x;
+
+            const r = Math.max(0, Math.min(255, imageData[src]     + errR[idx]));
+            const g = Math.max(0, Math.min(255, imageData[src + 1] + errG[idx]));
+            const b = Math.max(0, Math.min(255, imageData[src + 2] + errB[idx]));
+
+            const ci  = nearestColor(palette, r, g, b);
+            const col = palette[ci];
+            outRgb[src]     = col[0];
+            outRgb[src + 1] = col[1];
+            outRgb[src + 2] = col[2];
+            outRgb[src + 3] = 255;
+            outIdx[idx] = pi * 16 + ci;
+
+            // Diffuse error only to neighbours that share the same palette —
+            // prevents cross-palette contamination (e.g. GEN0 error shifting
+            // a green tree pixel into gray when it belongs to FIX0).
+            const er = (r - col[0]) * s, eg = (g - col[1]) * s, eb = (b - col[2]) * s;
+            const samePal = (nx, ny) =>
+                tileMap[Math.floor(ny / TILE) * TX + Math.floor(nx / TILE)] === pi;
+
+            if (x + 1 < W && samePal(x + 1, y)) {
+                errR[idx + 1]     += er * 7 / 16;
+                errG[idx + 1]     += eg * 7 / 16;
+                errB[idx + 1]     += eb * 7 / 16;
+            }
+            if (y + 1 < H) {
+                if (x > 0 && samePal(x - 1, y + 1)) {
+                    errR[idx + W - 1] += er * 3 / 16;
+                    errG[idx + W - 1] += eg * 3 / 16;
+                    errB[idx + W - 1] += eb * 3 / 16;
+                }
+                if (samePal(x, y + 1)) {
+                    errR[idx + W]     += er * 5 / 16;
+                    errG[idx + W]     += eg * 5 / 16;
+                    errB[idx + W]     += eb * 5 / 16;
+                }
+                if (x + 1 < W && samePal(x + 1, y + 1)) {
+                    errR[idx + W + 1] += er * 1 / 16;
+                    errG[idx + W + 1] += eg * 1 / 16;
+                    errB[idx + W + 1] += eb * 1 / 16;
+                }
+            }
+        }
+    }
+    return { outRgb, outIdx };
+}
+
 // ── Bayer 4×4 ordered dithering render ───────────────────────────────────── //
+// Better for animations (no temporal noise). Use DITHER=bayer in CLI.
 function renderBayer(imageData, W, H, tileMap, palettes, TX, strength) {
     const outRgb = new Uint8ClampedArray(W * H * 4);
     const outIdx = new Uint8Array(W * H);
@@ -332,11 +524,10 @@ function renderBayer(imageData, W, H, tileMap, palettes, TX, strength) {
             const b = Math.max(0, Math.min(255, imageData[src + 2] + boff));
             const ci  = nearestColor(palette, r, g, b);
             const col = palette[ci];
-            const dst = src;
-            outRgb[dst]     = col[0];
-            outRgb[dst + 1] = col[1];
-            outRgb[dst + 2] = col[2];
-            outRgb[dst + 3] = 255;
+            outRgb[src]     = col[0];
+            outRgb[src + 1] = col[1];
+            outRgb[src + 2] = col[2];
+            outRgb[src + 3] = 255;
             outIdx[y * W + x] = pi * 16 + ci;
         }
     }
@@ -476,7 +667,7 @@ function buildUsageStats(tileMap, outIdx, totalPalettes) {
 //   slots 0..numGenerate-1          → generated palettes
 //   slots numGenerate..total-1      → fixed palettes (same order as input)
 //
-async function processImage({ inputData, fixedPaletteColors, numGenerate, W, H, ditherStrength, residualThr, maxIter, doSmooth, fixedBias, seed }, deflate, onProgress) {
+async function processImage({ inputData, fixedPaletteColors, numGenerate, W, H, ditherStrength, ditherMode, residualThr, maxIter, doSmooth, fixedBias, seed }, deflate, onProgress) {
     if (fixedBias === undefined) fixedBias = 0.8;
     const rng = makePrng(seed !== undefined ? seed : 1);
     if (!numGenerate || numGenerate < 0) numGenerate = 0;
@@ -493,7 +684,7 @@ async function processImage({ inputData, fixedPaletteColors, numGenerate, W, H, 
         [inputData[i * 4], inputData[i * 4 + 1], inputData[i * 4 + 2]]);
     const residualPixels = allPixels.filter(p => {
         for (const pal of fixedPalettes)
-            for (let j = 1; j < pal.length; j++) if (dist2(p, pal[j]) <= thr2) return false;
+            for (let j = 1; j < pal.length; j++) if (coverDist2(p, pal[j]) <= thr2) return false;
         return true;
     });
     const initSamples = residualPixels.length >= N_PAL_COLORS ? residualPixels : allPixels;
@@ -502,7 +693,7 @@ async function processImage({ inputData, fixedPaletteColors, numGenerate, W, H, 
     let genPalettes = [];
     if (numGenerate > 0) {
         onProgress(15, `Building ${numGenerate} palette(s) (${residualPixels.length} residual px)...`);
-        const sorted = initSamples.slice().sort((a, b) => (a[0] + a[1] + a[2]) - (b[0] + b[1] + b[2]));
+        const sorted = initSamples.slice().sort((a, b) => rgbToOklab(a[0], a[1], a[2])[0] - rgbToOklab(b[0], b[1], b[2])[0]);
         const groupSize = Math.ceil(sorted.length / numGenerate);
         genPalettes = Array.from({ length: numGenerate }, (_, g) => {
             const group = sorted.slice(g * groupSize, (g + 1) * groupSize);
@@ -532,8 +723,18 @@ async function processImage({ inputData, fixedPaletteColors, numGenerate, W, H, 
     }
 
     // ── Render + encode ────────────────────────────────────────────────────── //
-    onProgress(80, 'Rendering (Bayer dither)...');
-    const { outRgb, outIdx } = renderBayer(inputData, W, H, tileMap, palettes, TX, ditherStrength);
+    const mode = ditherMode || 'fs';
+    let outRgb, outIdx;
+    if (mode === 'bayer') {
+        onProgress(80, 'Rendering (Bayer dither)...');
+        ({ outRgb, outIdx } = renderBayer(inputData, W, H, tileMap, palettes, TX, ditherStrength || 0));
+    } else if (mode === 'none') {
+        onProgress(80, 'Rendering (no dither)...');
+        ({ outRgb, outIdx } = renderBayer(inputData, W, H, tileMap, palettes, TX, 0));
+    } else {
+        onProgress(80, 'Rendering (Floyd-Steinberg dither)...');
+        ({ outRgb, outIdx } = renderFloydSteinberg(inputData, W, H, tileMap, palettes, TX, (ditherStrength || 75) / 100));
+    }
 
     onProgress(90, 'Encoding PNG...');
     const indexedPng = await encodeIndexedPNG(W, H, outIdx, buildRgbPalette(palettes), deflate);

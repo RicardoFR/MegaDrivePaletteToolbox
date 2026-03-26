@@ -16,7 +16,8 @@
  *   output_dir ../
  *
  * Options (env vars):
- *   DITHER=20        Bayer dither strength (0=off, default 20)
+ *   DITHER_MODE=fs   Dither mode: fs (Floyd-Steinberg, default), bayer, none
+ *   DITHER=75        Dither strength: 0-100 for fs (default 75), or pixel offset for bayer (default 20)
  *   RESIDUAL=3600    Residual threshold² (default 3600)
  *   ITERS=6          Refinement iterations (default 6)
  *   SMOOTH=1         Tile smoothing (1=on, 0=off, default 1)
@@ -42,7 +43,8 @@ const INPUT_PATH = args[0];
 const OUT_DIR    = args[args.length - 1];
 const PAL_PATHS  = args.slice(1, -1);
 
-const DITHER_STRENGTH = parseInt(process.env.DITHER    ?? '0');
+const DITHER_MODE     = process.env.DITHER_MODE ?? 'none';
+const DITHER_STRENGTH = parseInt(process.env.DITHER    ?? '20');
 const RESIDUAL_THR    = Math.sqrt(parseInt(process.env.RESIDUAL ?? '3600'));
 const MAX_ITER        = parseInt(process.env.ITERS      ?? '6');
 const DO_SMOOTH       = (process.env.SMOOTH   ?? '1') !== '0';
@@ -62,7 +64,7 @@ async function main() {
     console.log(`Input:    ${INPUT_PATH}`);
     PAL_PATHS.forEach((p, i) => console.log(`Fixed[${i}]: ${p}`));
     console.log(`Output:   ${OUT_DIR}`);
-    console.log(`Generate: ${NUM_GENERATE}  Dither: ${DITHER_STRENGTH}  Residual: ${RESIDUAL_THR.toFixed(0)}  Iters: ${MAX_ITER}  Smooth: ${DO_SMOOTH}  Seed: ${SEED}`);
+    console.log(`Generate: ${NUM_GENERATE}  Dither: ${DITHER_MODE}${DITHER_MODE === 'bayer' ? `(${DITHER_STRENGTH})` : ''}  Residual: ${RESIDUAL_THR.toFixed(0)}  Iters: ${MAX_ITER}  Smooth: ${DO_SMOOTH}  Seed: ${SEED}`);
     console.log('');
 
     process.stdout.write('Loading images...');
@@ -91,7 +93,7 @@ async function main() {
     let lastPct = -1;
     const result = await processImage(
         { inputData, fixedPaletteColors, numGenerate: NUM_GENERATE, W, H,
-          ditherStrength: DITHER_STRENGTH, residualThr: RESIDUAL_THR,
+          ditherMode: DITHER_MODE, ditherStrength: DITHER_STRENGTH, residualThr: RESIDUAL_THR,
           maxIter: MAX_ITER, doSmooth: DO_SMOOTH, fixedBias: FIXED_BIAS, seed: SEED },
         deflate,
         (pct, text) => {

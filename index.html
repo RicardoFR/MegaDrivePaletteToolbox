@@ -326,7 +326,7 @@ button:disabled { opacity: 0.35; cursor: default; }
 <body>
 
 <h1>MEGA DRIVE PALETTE TOOLBOX</h1>
-<p class="subtitle">N-palette tile mapper · 8×8 tiles · Bayer ordered dithering</p>
+<p class="subtitle">N-palette tile mapper · 8×8 tiles · Floyd-Steinberg / Bayer dithering</p>
 
 <!-- ── Inputs ── -->
 <div class="input-section">
@@ -368,8 +368,16 @@ button:disabled { opacity: 0.35; cursor: default; }
 <!-- ── Controls ── -->
 <div class="controls">
     <div class="ctrl">
-        <div class="ctrl-label"><span>Dither strength</span><span id="v-dither">0</span></div>
-        <input type="range" id="sl-dither" min="0" max="60" value="0"
+        <div class="ctrl-label"><span>Dither mode</span></div>
+        <select id="sel-dither-mode" onchange="updateDitherUI()">
+            <option value="fs">Floyd-Steinberg</option>
+            <option value="bayer">Bayer ordered</option>
+            <option value="none" selected>None</option>
+        </select>
+    </div>
+    <div class="ctrl" id="ctrl-dither-strength">
+        <div class="ctrl-label"><span id="lbl-dither">FS strength</span><span id="v-dither">75</span></div>
+        <input type="range" id="sl-dither" min="0" max="100" value="75"
                oninput="document.getElementById('v-dither').textContent=this.value">
     </div>
     <div class="ctrl">
@@ -524,6 +532,26 @@ async function handlePaletteFile(id, name, file) {
         if (entry) entry.colors = colors;
         checkReady();
     } catch (err) { console.error(err); }
+}
+
+function updateDitherUI() {
+    const mode = document.getElementById('sel-dither-mode').value;
+    const ctrl = document.getElementById('ctrl-dither-strength');
+    const lbl  = document.getElementById('lbl-dither');
+    const sl   = document.getElementById('sl-dither');
+    if (mode === 'none') {
+        ctrl.style.display = 'none';
+    } else if (mode === 'bayer') {
+        ctrl.style.display = '';
+        lbl.textContent = 'Bayer strength';
+        sl.max = 60; sl.value = Math.min(parseInt(sl.value), 60);
+        document.getElementById('v-dither').textContent = sl.value;
+    } else {
+        ctrl.style.display = '';
+        lbl.textContent = 'FS strength';
+        sl.max = 100;
+        document.getElementById('v-dither').textContent = sl.value;
+    }
 }
 
 function updateGenerateMax() {
@@ -705,6 +733,7 @@ document.getElementById('btn-run').addEventListener('click', () => {
         options: {
             W:              imageData.width,
             H:              imageData.height,
+            ditherMode:     document.getElementById('sel-dither-mode').value,
             ditherStrength: parseInt(document.getElementById('sl-dither').value),
             residualThr:    Math.sqrt(parseInt(document.getElementById('sl-residual').value)),
             maxIter:        parseInt(document.getElementById('sl-iter').value),
