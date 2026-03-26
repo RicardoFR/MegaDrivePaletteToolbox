@@ -1,6 +1,6 @@
 # MegaDrive Palette Toolbox
 
-Mega Drive / Genesis palette quantizer — maps any image to 1–4 hardware palettes (9-bit, 3bpc) using K-means++ and 4×4 Bayer ordered dithering. Outputs an indexed PNG ready for SGDK.
+Mega Drive / Genesis palette quantizer — maps any image to 1–4 hardware palettes (9-bit, 3bpc) using Wu's Color Quantization and OKLab perceptual color matching. Outputs an indexed PNG ready for SGDK.
 
 ### The idea
 
@@ -36,15 +36,18 @@ node cli.js [input] [pal1.png pal2.png ...] [output_dir]
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GENERATE` | `1` | Number of palettes to generate |
-| `DITHER` | `20` | Bayer dither strength (0 = off) |
-| `RESIDUAL` | `3600` | Residual threshold² for palette seeding |
-| `ITERS` | `6` | K-means refinement iterations |
-| `SMOOTH` | `1` | Row-majority palette enforcement (0 = off) |
+| `DITHER_MODE` | `none` | Dither mode: `none`, `fs` (Floyd-Steinberg), `bayer` |
+| `DITHER` | `20` | Dither strength: 0–100 for FS, pixel offset for Bayer |
+| `RESIDUAL` | `3600` | Residual threshold² — pixels further than this from any fixed palette color are considered uncovered and used to build generated palettes |
+| `ITERS` | `6` | Refinement iterations |
+| `SMOOTH` | `1` | Tile smoothing and row-majority enforcement (0 = off) |
+| `FIXED_BIAS` | `80` | Fixed palette affinity 0–100: how aggressively fixed palettes claim tiles over generated ones |
+| `SEED` | `1` | RNG seed for deterministic output |
 
 **Example:**
 
 ```bash
-GENERATE=2 DITHER=30 node cli.js bg.png sky.png sprites.png out/
+GENERATE=2 DITHER_MODE=fs DITHER=75 node cli.js bg.png sky.png sprites.png out/
 ```
 
 ## Outputs
@@ -58,12 +61,15 @@ GENERATE=2 DITHER=30 node cli.js bg.png sky.png sprites.png out/
 
 ## How it works
 
-1. **Residual analysis** — finds pixels not well covered by any fixed palette
-2. **K-means++** — generates N palettes from residual pixels, seeded by brightness groups
-3. **Iterative refinement** — reassigns tiles to best palette, rebuilds palette colors, repeats
-4. **Row-majority enforcement** — each tile row is locked to a single palette (matches Mega Drive HINT scanline behavior), unless it significantly degrades quality
-5. **Bayer 4×4 dithering** — 16-level ordered dithering to smooth color transitions
-6. **MD color snap** — all generated colors are quantized to valid 9-bit MD values (3 bits per channel)
+1. **Residual analysis** — finds pixels not well covered by any fixed palette (using `RESIDUAL` threshold)
+2. **Wu's Color Quantization** — generates palettes from residual pixels pre-snapped to the MD color grid, eliminating wasted slots from post-snap duplicates
+3. **Iterative refinement** — reassigns tiles to best palette, rebuilds palette colors from assigned pixels, repeats N times until convergence
+4. **Row-majority enforcement** — each tile row is locked to a single palette (matches Mega Drive scanline palette behavior), unless it significantly degrades quality
+5. **Tile smoothing** — removes isolated palette islands (a tile surrounded by neighbors using a different palette)
+6. **Dithering** — optional Floyd-Steinberg error diffusion (palette-boundary-aware) or 4×4 Bayer ordered dithering
+7. **MD color snap** — all generated colors are quantized to valid 9-bit MD values (3 bits per channel: 0, 36, 73, 109, 146, 182, 219, 255)
+
+Color matching throughout uses **OKLab** perceptual distance for visually accurate nearest-color selection.
 
 ## Palette format
 
