@@ -3,446 +3,793 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Mega Drive Palette Tool</title>
+<title>Mega Drive Palette Toolbox</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono&display=swap" rel="stylesheet">
 <style>
+/* ── MD3 Dark Color Tokens (Blue seed) ───────────────────────────────────── */
+:root {
+    --bg:           #1A1B1F;
+    --surf-low:     #1E1F24;
+    --surf:         #22232A;
+    --surf-high:    #2C2D35;
+    --surf-highest: #373840;
+
+    --primary:           #ADC6FF;
+    --on-primary:        #002E69;
+    --primary-container: #274C94;
+    --on-primary-cont:   #DBE1FF;
+
+    --secondary:         #C0C6DC;
+    --sec-container:     #404659;
+    --on-sec-cont:       #DCE2F9;
+
+    --error:             #FFB4AB;
+    --error-container:   #93000A;
+
+    --success:           #6FCF97;
+    --success-container: #1B3A2D;
+
+    --on-surface:   #E3E2E6;
+    --on-surf-var:  #C4C6D0;
+    --outline:      #8E9099;
+    --outline-var:  #44464F;
+
+    --mono:       'Roboto Mono', 'JetBrains Mono', monospace;
+    --shape-xs:   4px;
+    --shape-sm:   8px;
+    --shape-md:   12px;
+    --shape-lg:   16px;
+    --shape-xl:   28px;
+    --shape-full: 100px;
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
-    font-family: 'Courier New', monospace;
-    background: #0f0f1a;
-    color: #cdd6f4;
+    font-family: 'Roboto', -apple-system, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--on-surface);
     min-height: 100vh;
-    padding: 20px;
+    line-height: 1.5;
 }
 
-h1 {
-    color: #89dceb;
-    font-size: 18px;
-    margin-bottom: 4px;
-    letter-spacing: 1px;
+/* ── Top App Bar ─────────────────────────────────────────────────────────── */
+.top-bar {
+    background: var(--surf-low);
+    padding: 0 24px;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    border-bottom: 1px solid var(--outline-var);
 }
 
-.subtitle { color: #6c7086; font-size: 12px; margin-bottom: 20px; }
-
-/* ── Input grid ── */
-.input-section { margin-bottom: 16px; }
-.input-section-label {
+.top-bar-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--primary-container);
+    color: var(--on-primary-cont);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--mono);
     font-size: 11px;
-    color: #6c7086;
-    margin-bottom: 6px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    flex-shrink: 0;
 }
 
+.top-bar-title {
+    font-size: 22px;
+    font-weight: 400;
+    color: var(--on-surface);
+}
+
+.top-bar-sub {
+    font-size: 12px;
+    color: var(--on-surf-var);
+    margin-left: auto;
+}
+
+/* ── Main content ────────────────────────────────────────────────────────── */
+.main {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 20px 20px 60px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+/* ── MD3 Card ────────────────────────────────────────────────────────────── */
+.card {
+    background: var(--surf);
+    border-radius: var(--shape-xl);
+    padding: 20px 24px;
+}
+
+.card-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--primary);
+    margin-bottom: 16px;
+}
+
+/* ── Input grid ──────────────────────────────────────────────────────────── */
 .input-grid {
     display: flex;
     flex-wrap: wrap;
-    gap: 12px;
+    gap: 10px;
     align-items: flex-start;
 }
 
 .input-card {
-    background: #1e1e2e;
-    border: 2px dashed #313244;
-    border-radius: 8px;
-    padding: 12px;
+    background: var(--surf-highest);
+    border-radius: var(--shape-lg);
+    padding: 16px;
     cursor: pointer;
-    transition: border-color 0.15s;
-    min-height: 80px;
+    transition: background 0.15s;
+    min-height: 88px;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
+    position: relative;
+    overflow: hidden;
 }
-.input-card:hover { border-color: #89dceb; }
-.input-card.loaded { border-style: solid; border-color: #a6e3a1; }
+
+.input-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--primary);
+    opacity: 0;
+    transition: opacity 0.15s;
+    pointer-events: none;
+}
+
+.input-card:hover::before { opacity: 0.08; }
+
+.input-card.loaded {
+    background: var(--success-container);
+    outline: 1.5px solid var(--success);
+}
+
 .input-card label {
-    font-size: 11px;
-    color: #6c7086;
-    margin-bottom: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--on-surf-var);
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
     pointer-events: none;
+    margin-bottom: 8px;
+    position: relative;
 }
+
 .input-card .hint {
-    font-size: 11px;
-    color: #45475a;
+    font-size: 12px;
+    color: var(--outline);
     pointer-events: none;
+    position: relative;
 }
+
 .input-card canvas {
     max-width: 100%;
     max-height: 120px;
     image-rendering: pixelated;
     display: block;
+    border-radius: 6px;
+    position: relative;
 }
+
 .pal-canvas-wrap {
     display: flex;
     justify-content: center;
     margin-top: 6px;
+    position: relative;
 }
+
 .pal-canvas-wrap canvas {
     width: 160px !important;
     height: 20px !important;
     image-rendering: pixelated;
+    border-radius: 4px;
 }
 
-#card-input { min-width: 200px; flex: 2; }
-.pal-card   { min-width: 140px; flex: 1; }
+#card-input { min-width: 220px; flex: 2; }
+.pal-card   { min-width: 150px; flex: 1; }
 
 .pal-add-btn {
-    background: #1e1e2e;
-    border: 2px dashed #45475a;
-    border-radius: 8px;
-    padding: 12px;
-    min-height: 80px;
-    min-width: 80px;
+    background: var(--surf-high);
+    border-radius: var(--shape-lg);
+    min-height: 88px;
+    min-width: 58px;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
     font-size: 22px;
-    color: #45475a;
-    transition: border-color 0.15s, color 0.15s;
+    color: var(--primary);
+    transition: background 0.15s;
     user-select: none;
+    position: relative;
+    overflow: hidden;
 }
-.pal-add-btn:hover { border-color: #89dceb; color: #89dceb; }
+
+.pal-add-btn::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--primary);
+    opacity: 0;
+    transition: opacity 0.15s;
+    pointer-events: none;
+}
+
+.pal-add-btn:hover::before { opacity: 0.08; }
 
 .pal-remove-btn {
-    font-size: 10px;
-    color: #f38ba8;
+    font-size: 11px;
+    color: var(--error);
     cursor: pointer;
-    margin-top: 4px;
+    margin-top: 6px;
     background: none;
     border: none;
     font-family: inherit;
     padding: 0;
-    opacity: 0.7;
+    opacity: 0.55;
+    position: relative;
 }
+
 .pal-remove-btn:hover { opacity: 1; }
 
-/* ── Controls ── */
+/* ── Resize card ─────────────────────────────────────────────────────────── */
+.resize-card {
+    background: var(--surf);
+    border-radius: var(--shape-xl);
+    padding: 16px 24px;
+}
+
+.resize-toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--on-surf-var);
+    cursor: pointer;
+    user-select: none;
+}
+
+.resize-toggle input[type=checkbox] {
+    cursor: pointer;
+    accent-color: var(--primary);
+    width: 16px;
+    height: 16px;
+}
+
+.resize-body {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 14px;
+    flex-wrap: wrap;
+}
+
+.resize-orig {
+    font-size: 12px;
+    color: var(--on-surf-var);
+    font-family: var(--mono);
+}
+
+.resize-arrow { color: var(--outline); }
+.resize-inputs { display: flex; align-items: center; gap: 8px; }
+
+.resize-inputs input[type=number] {
+    width: 76px;
+    background: var(--surf-highest);
+    border: 1px solid var(--outline);
+    border-radius: var(--shape-xs);
+    color: var(--on-surface);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 6px 10px;
+    text-align: center;
+    outline: none;
+    transition: border-color 0.15s, border-width 0.1s;
+}
+
+.resize-inputs input[type=number]:focus {
+    border-color: var(--primary);
+    border-width: 2px;
+}
+
+.resize-sep { color: var(--outline); }
+
+.resize-lock {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--on-surf-var);
+    cursor: pointer;
+}
+
+.resize-lock input[type=checkbox] { cursor: pointer; accent-color: var(--primary); }
+
+/* ── Controls ────────────────────────────────────────────────────────────── */
 .controls {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr 1fr 1fr;
-    gap: 12px;
-    margin-bottom: 16px;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
 }
 
 .ctrl {
-    background: #1e1e2e;
-    border-radius: 6px;
-    padding: 10px 12px;
+    background: var(--surf-high);
+    border-radius: var(--shape-lg);
+    padding: 14px 16px;
 }
+
 .ctrl-label {
     display: flex;
     justify-content: space-between;
-    font-size: 11px;
-    color: #a6adc8;
-    margin-bottom: 6px;
+    align-items: center;
+    margin-bottom: 10px;
 }
-.ctrl-label span:last-child { color: #89dceb; font-weight: bold; }
+
+.ctrl-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--on-surf-var);
+}
+
+.ctrl-val {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--on-primary-cont);
+    font-family: var(--mono);
+    background: var(--primary-container);
+    padding: 2px 9px;
+    border-radius: var(--shape-full);
+}
+
 input[type=range] {
     width: 100%;
-    accent-color: #89dceb;
+    accent-color: var(--primary);
     cursor: pointer;
 }
+
+select {
+    width: 100%;
+    background: var(--surf-highest);
+    border: 1px solid var(--outline);
+    border-radius: var(--shape-xs);
+    color: var(--on-surface);
+    font-family: inherit;
+    font-size: 13px;
+    padding: 7px 30px 7px 12px;
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.15s;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%238E9099' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-color: var(--surf-highest);
+}
+
+select:focus { border-color: var(--primary); border-width: 2px; }
+
 .ctrl-check {
     display: flex;
     align-items: center;
-    gap: 8px;
-    font-size: 12px;
-    color: #a6adc8;
-}
-input[type=checkbox] {
-    accent-color: #89dceb;
-    width: 14px;
-    height: 14px;
+    gap: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--on-surf-var);
+    height: 100%;
     cursor: pointer;
 }
 
-/* ── Buttons ── */
-.btn-row { display: flex; gap: 8px; margin-bottom: 16px; }
+input[type=checkbox] {
+    accent-color: var(--primary);
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+.btn-row { display: flex; align-items: center; gap: 12px; margin: 4px 0 12px; }
 
 button {
-    padding: 9px 20px;
+    padding: 10px 24px;
     border: none;
-    border-radius: 5px;
+    border-radius: var(--shape-full);
     cursor: pointer;
     font-family: inherit;
-    font-size: 13px;
-    font-weight: bold;
-    transition: opacity 0.15s;
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: 0.1px;
+    position: relative;
+    overflow: hidden;
+    transition: box-shadow 0.2s;
 }
-button:disabled { opacity: 0.35; cursor: default; }
-.btn-primary { background: #89dceb; color: #0f0f1a; }
-.btn-primary:hover:not(:disabled) { opacity: 0.85; }
-.btn-dl { background: #313244; color: #cdd6f4; }
-.btn-dl:hover:not(:disabled) { background: #45475a; }
 
-/* ── Progress ── */
+button::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: currentColor;
+    opacity: 0;
+    transition: opacity 0.15s;
+    pointer-events: none;
+}
+
+button:hover::before  { opacity: 0.08; }
+button:active::before { opacity: 0.12; }
+button:disabled { opacity: 0.38; cursor: default; pointer-events: none; }
+
+.btn-primary {
+    background: var(--primary);
+    color: var(--on-primary);
+    padding: 12px 32px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.4), 0 2px 6px rgba(0,0,0,.2);
+}
+
+.btn-primary:hover:not(:disabled) {
+    box-shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 12px rgba(0,0,0,.3);
+}
+
+.btn-dl {
+    background: var(--sec-container);
+    color: var(--on-sec-cont);
+    font-size: 13px;
+    padding: 9px 18px;
+}
+
+/* ── Progress ────────────────────────────────────────────────────────────── */
 .progress-wrap { margin-bottom: 4px; }
+
 .progress-bar {
-    height: 3px;
-    background: #313244;
-    border-radius: 2px;
+    height: 4px;
+    background: var(--surf-highest);
+    border-radius: 0;
     overflow: hidden;
 }
+
 .progress-fill {
     height: 100%;
-    background: #89dceb;
-    border-radius: 2px;
-    transition: width 0.2s;
+    background: var(--primary);
+    transition: width 0.2s ease;
     width: 0%;
 }
-.status { font-size: 11px; color: #6c7086; min-height: 16px; margin-top: 3px; }
 
-/* ── Result ── */
+.status {
+    font-size: 12px;
+    color: var(--on-surf-var);
+    min-height: 18px;
+    margin-top: 6px;
+    font-family: var(--mono);
+}
+
+/* ── Result ──────────────────────────────────────────────────────────────── */
 .result { display: none; }
 
-.result-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 8px;
-    gap: 12px;
-}
-.usage-info { font-size: 11px; color: #6c7086; white-space: nowrap; }
+.result-meta { margin-bottom: 16px; }
 
-.gen-pals { display: flex; flex-direction: column; gap: 6px; }
-.pal-row {
+/* Stacked usage bar */
+.usage-total-bar {
+    display: flex;
+    height: 6px;
+    border-radius: var(--shape-full);
+    overflow: hidden;
+    gap: 2px;
+    margin-bottom: 14px;
+}
+
+.usage-total-segment { height: 100%; }
+
+/* Per-palette stat rows */
+.palette-stats { display: flex; flex-direction: column; gap: 8px; }
+
+.pal-stat-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
 }
-.pal-row-label { font-size: 11px; color: #6c7086; white-space: nowrap; }
-.swatches { display: flex; gap: 2px; flex-wrap: wrap; }
-.swatch {
-    width: 18px;
+
+.pal-stat-badge {
+    font-size: 10px;
+    font-weight: 700;
+    font-family: var(--mono);
+    letter-spacing: 0.5px;
+    padding: 3px 10px;
+    border-radius: var(--shape-full);
+    white-space: nowrap;
+    min-width: 48px;
+    text-align: center;
+}
+
+.pal-stat-swatches {
+    display: flex;
+    gap: 2px;
+    flex: 1;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.pal-stat-swatch {
+    flex: 1;
     height: 18px;
-    border: 1px solid #313244;
-    border-radius: 2px;
     cursor: help;
+    transition: opacity 0.15s;
+}
+
+.pal-stat-pct {
+    font-size: 12px;
+    font-weight: 700;
+    font-family: var(--mono);
+    color: var(--on-surf-var);
+    white-space: nowrap;
+    min-width: 36px;
+    text-align: right;
+}
+
+.result-meta-footer {
+    font-size: 11px;
+    color: var(--outline);
+    font-family: var(--mono);
+    margin-top: 6px;
+}
+
+.preview-wrap {
+    background: var(--surf-highest);
+    border-radius: var(--shape-lg);
+    padding: 16px;
+    width: 100%;
 }
 
 #preview {
     display: block;
     image-rendering: pixelated;
-    border: 1px solid #313244;
-    border-radius: 4px;
-    zoom: 2;
+    width: 100%;
+    height: auto;
 }
 
-.dl-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
-
-/* ── Palette report ── */
-.pal-report-grid {
+.dl-row {
     display: flex;
+    gap: 8px;
+    margin-top: 16px;
     flex-wrap: wrap;
-    gap: 12px;
-    margin-top: 4px;
 }
+
+/* ── Palette report ──────────────────────────────────────────────────────── */
+.pal-report-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 10px;
+    margin-top: 20px;
+}
+
 .pal-report-card {
-    background: #1e1e2e;
-    border-radius: 6px;
-    padding: 10px 12px;
-    min-width: 200px;
+    background: var(--surf-high);
+    border-radius: var(--shape-lg);
+    padding: 14px 16px;
+    overflow: hidden;
 }
+
 .pal-report-title {
-    font-size: 11px;
-    color: #89dceb;
-    margin-bottom: 6px;
-    font-weight: bold;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--primary);
+    font-family: var(--mono);
+    margin-bottom: 10px;
+    letter-spacing: 0.5px;
 }
+
+.pal-swatch-strip {
+    display: flex;
+    gap: 2px;
+    margin-bottom: 10px;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.pal-swatch-strip-item {
+    flex: 1;
+    height: 8px;
+}
+
 .pal-report-entry {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 7px;
     font-size: 11px;
-    line-height: 1.6;
-    color: #6c7086;
+    line-height: 1.85;
+    color: var(--outline);
+    font-family: var(--mono);
+    padding: 0 6px;
+    border-radius: 4px;
 }
-.pal-report-entry.used { color: #cdd6f4; }
+
+.pal-report-entry.used {
+    color: #6FCF97;
+    background: rgba(111, 207, 151, 0.13);
+    font-weight: 500;
+}
+
+.pal-report-entry.unused {
+    color: #F87171;
+    background: rgba(248, 113, 113, 0.07);
+}
+
 .pal-report-swatch {
     width: 12px;
     height: 12px;
-    border-radius: 2px;
-    border: 1px solid #313244;
+    border-radius: 3px;
     flex-shrink: 0;
 }
-
-/* ── Resize section ── */
-.resize-section {
-    margin-bottom: 16px;
-    background: #1e1e2e;
-    border: 1px solid #313244;
-    border-radius: 8px;
-    padding: 10px 14px;
-}
-.resize-toggle {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 11px;
-    color: #6c7086;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    cursor: pointer;
-    user-select: none;
-}
-.resize-toggle input[type=checkbox] { cursor: pointer; accent-color: #89dceb; }
-.resize-body {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-top: 10px;
-    flex-wrap: wrap;
-}
-.resize-orig { font-size: 11px; color: #6c7086; white-space: nowrap; }
-.resize-arrow { color: #6c7086; font-size: 13px; }
-.resize-inputs { display: flex; align-items: center; gap: 6px; }
-.resize-inputs input[type=number] {
-    width: 70px;
-    background: #181825;
-    border: 1px solid #45475a;
-    border-radius: 4px;
-    color: #cdd6f4;
-    font-family: inherit;
-    font-size: 12px;
-    padding: 4px 6px;
-    text-align: center;
-}
-.resize-inputs input[type=number]:focus { outline: none; border-color: #89dceb; }
-.resize-sep { color: #6c7086; font-size: 13px; }
-.resize-lock {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 11px;
-    color: #6c7086;
-    cursor: pointer;
-    white-space: nowrap;
-}
-.resize-lock input[type=checkbox] { cursor: pointer; accent-color: #89dceb; }
 </style>
 </head>
 <body>
 
-<h1>MEGA DRIVE PALETTE TOOLBOX</h1>
-<p class="subtitle">N-palette tile mapper · 8×8 tiles · Floyd-Steinberg / Bayer dithering</p>
+<!-- ── Top App Bar ── -->
+<div class="top-bar">
+    <div class="top-bar-icon">MD</div>
+    <span class="top-bar-title">Mega Drive Palette Toolbox</span>
+    <span class="top-bar-sub">8&times;8 tiles &middot; 4 palettes &middot; OKLab &middot; WuQuant</span>
+</div>
 
-<!-- ── Inputs ── -->
-<div class="input-section">
-    <div class="input-section-label">Input image + fixed palettes</div>
-    <div class="input-grid" id="input-grid">
-        <div class="input-card" id="card-input" onclick="document.getElementById('fi-input').click()">
-            <input type="file" id="fi-input" accept="image/*" style="display:none">
-            <label>INPUT IMAGE</label>
-            <canvas id="cv-input" style="display:none"></canvas>
-            <span class="hint" id="hint-input">click or drop image</span>
+<div class="main">
+
+    <!-- 01 Images -->
+    <div class="card">
+        <div class="card-title">Images</div>
+        <div class="input-grid" id="input-grid">
+            <div class="input-card" id="card-input" onclick="document.getElementById('fi-input').click()">
+                <input type="file" id="fi-input" accept="image/*" style="display:none">
+                <label>Input image</label>
+                <canvas id="cv-input" style="display:none"></canvas>
+                <span class="hint" id="hint-input">click or drop</span>
+            </div>
+            <!-- fixed palette cards injected here by JS -->
+            <div class="pal-add-btn" id="btn-add-pal" title="Add fixed palette">+</div>
         </div>
-        <!-- fixed palette cards injected here by JS -->
-        <div class="pal-add-btn" id="btn-add-pal" title="Add fixed palette">+</div>
     </div>
-</div>
 
-<!-- ── Resize (step 2, optional) ── -->
-<div class="resize-section" id="resize-section" style="display:none">
-    <label class="resize-toggle">
-        <input type="checkbox" id="cb-resize" onchange="onResizeToggle()">
-        Resize image (optional)
-    </label>
-    <div class="resize-body" id="resize-body" style="display:none">
-        <span class="resize-orig" id="resize-orig"></span>
-        <span class="resize-arrow">→</span>
-        <div class="resize-inputs">
-            <input type="number" id="inp-resize-w" min="8" max="2048" step="8"
-                   oninput="onResizeWChange()">
-            <span class="resize-sep">×</span>
-            <input type="number" id="inp-resize-h" min="8" max="2048" step="8"
-                   oninput="onResizeHChange()">
+    <!-- Resize (optional) -->
+    <div class="resize-card" id="resize-section" style="display:none">
+        <label class="resize-toggle">
+            <input type="checkbox" id="cb-resize" onchange="onResizeToggle()">
+            Resize before processing
+        </label>
+        <div class="resize-body" id="resize-body" style="display:none">
+            <span class="resize-orig" id="resize-orig"></span>
+            <span class="resize-arrow">&rarr;</span>
+            <div class="resize-inputs">
+                <input type="number" id="inp-resize-w" min="8" max="2048" step="8" oninput="onResizeWChange()">
+                <span class="resize-sep">&times;</span>
+                <input type="number" id="inp-resize-h" min="8" max="2048" step="8" oninput="onResizeHChange()">
+            </div>
+            <label class="resize-lock">
+                <input type="checkbox" id="cb-aspect" checked> lock ratio
+            </label>
         </div>
-        <label class="resize-lock">
-            <input type="checkbox" id="cb-aspect" checked> lock ratio
-        </label>
-    </div>
-</div>
-
-<!-- ── Controls ── -->
-<div class="controls">
-    <div class="ctrl">
-        <div class="ctrl-label"><span>Dither mode</span></div>
-        <select id="sel-dither-mode" onchange="updateDitherUI()">
-            <option value="fs">Floyd-Steinberg</option>
-            <option value="bayer">Bayer ordered</option>
-            <option value="none" selected>None</option>
-        </select>
-    </div>
-    <div class="ctrl" id="ctrl-dither-strength">
-        <div class="ctrl-label"><span id="lbl-dither">FS strength</span><span id="v-dither">75</span></div>
-        <input type="range" id="sl-dither" min="0" max="100" value="75"
-               oninput="document.getElementById('v-dither').textContent=this.value">
-    </div>
-    <div class="ctrl">
-        <div class="ctrl-label"><span>Residual threshold</span><span id="v-residual">3600</span></div>
-        <input type="range" id="sl-residual" min="500" max="15000" step="100" value="3600"
-               oninput="document.getElementById('v-residual').textContent=this.value">
-    </div>
-    <div class="ctrl">
-        <div class="ctrl-label"><span>Iterations</span><span id="v-iter">6</span></div>
-        <input type="range" id="sl-iter" min="1" max="12" value="6"
-               oninput="document.getElementById('v-iter').textContent=this.value">
-    </div>
-    <div class="ctrl">
-        <div class="ctrl-label"><span>Generate palettes</span><span id="v-generate">1</span></div>
-        <input type="range" id="sl-generate" min="0" max="4" value="1"
-               oninput="document.getElementById('v-generate').textContent=this.value; updateGenerateMax(); checkReady()">
-    </div>
-    <div class="ctrl">
-        <div class="ctrl-label"><span>Palette affinity</span><span id="v-fixed-bias">80</span></div>
-        <input type="range" id="sl-fixed-bias" min="0" max="100" value="80"
-               oninput="document.getElementById('v-fixed-bias').textContent=this.value">
-    </div>
-    <div class="ctrl" style="display:flex;align-items:center;justify-content:center">
-        <label class="ctrl-check">
-            <input type="checkbox" id="cb-smooth" checked>
-            Tile smoothing
-        </label>
-    </div>
-</div>
-
-<!-- ── Process button ── -->
-<div class="btn-row">
-    <button class="btn-primary" id="btn-run" disabled>&#9654; PROCESS</button>
-</div>
-
-<!-- ── Progress ── -->
-<div class="progress-wrap">
-    <div class="progress-bar"><div class="progress-fill" id="prog-fill"></div></div>
-    <div class="status" id="status-text"></div>
-</div>
-
-<!-- ── Result ── -->
-<div class="result" id="result">
-    <div class="result-header">
-        <div class="gen-pals" id="gen-pals"></div>
-        <div class="usage-info" id="usage-info"></div>
     </div>
 
-    <canvas id="preview"></canvas>
+    <!-- 02 Settings -->
+    <div class="card">
+        <div class="card-title">Settings</div>
+        <div class="controls">
+            <div class="ctrl">
+                <div class="ctrl-label"><span class="ctrl-name">Dither mode</span></div>
+                <select id="sel-dither-mode" onchange="updateDitherUI()">
+                    <option value="fs">Floyd-Steinberg</option>
+                    <option value="bayer">Bayer ordered</option>
+                    <option value="none" selected>None</option>
+                </select>
+            </div>
 
-    <div class="dl-row">
-        <button class="btn-dl" id="btn-preview">&#8595; Preview PNG</button>
-        <button class="btn-dl" id="btn-indexed">&#8595; Indexed PNG (SGDK)</button>
-        <button class="btn-dl" id="btn-debug">&#8595; Debug (tile map)</button>
-        <button class="btn-dl" id="btn-report">&#8595; Palette report</button>
+            <div class="ctrl" id="ctrl-dither-strength" style="display:none">
+                <div class="ctrl-label">
+                    <span class="ctrl-name" id="lbl-dither">FS strength</span>
+                    <span class="ctrl-val" id="v-dither">75</span>
+                </div>
+                <input type="range" id="sl-dither" min="0" max="100" value="75"
+                       oninput="document.getElementById('v-dither').textContent=this.value">
+            </div>
+
+            <div class="ctrl">
+                <div class="ctrl-label">
+                    <span class="ctrl-name">Residual threshold</span>
+                    <span class="ctrl-val" id="v-residual">3600</span>
+                </div>
+                <input type="range" id="sl-residual" min="500" max="15000" step="100" value="3600"
+                       oninput="document.getElementById('v-residual').textContent=this.value">
+            </div>
+
+            <div class="ctrl">
+                <div class="ctrl-label">
+                    <span class="ctrl-name">Refinement iterations</span>
+                    <span class="ctrl-val" id="v-iter">6</span>
+                </div>
+                <input type="range" id="sl-iter" min="1" max="12" value="6"
+                       oninput="document.getElementById('v-iter').textContent=this.value">
+            </div>
+
+            <div class="ctrl">
+                <div class="ctrl-label">
+                    <span class="ctrl-name">Generate palettes</span>
+                    <span class="ctrl-val" id="v-generate">1</span>
+                </div>
+                <input type="range" id="sl-generate" min="0" max="4" value="1"
+                       oninput="document.getElementById('v-generate').textContent=this.value; updateGenerateMax(); checkReady()">
+            </div>
+
+            <div class="ctrl">
+                <div class="ctrl-label">
+                    <span class="ctrl-name">Palette affinity</span>
+                    <span class="ctrl-val" id="v-fixed-bias">80</span>
+                </div>
+                <input type="range" id="sl-fixed-bias" min="0" max="100" value="80"
+                       oninput="document.getElementById('v-fixed-bias').textContent=this.value">
+            </div>
+
+            <div class="ctrl" style="display:flex;align-items:center;">
+                <label class="ctrl-check">
+                    <input type="checkbox" id="cb-smooth" checked>
+                    Tile smoothing
+                </label>
+            </div>
+        </div>
     </div>
 
-    <div id="pal-report" style="margin-top:14px;"></div>
-</div>
+    <!-- 03 Process -->
+    <div class="btn-row">
+        <button class="btn-primary" id="btn-run" disabled>&#9654;&ensp;Process image</button>
+    </div>
+
+    <div class="progress-wrap">
+        <div class="progress-bar"><div class="progress-fill" id="prog-fill"></div></div>
+        <div class="status" id="status-text"></div>
+    </div>
+
+    <!-- 04 Result -->
+    <div class="result" id="result">
+        <div class="card">
+            <div class="card-title">Result</div>
+
+            <div class="result-meta">
+                <div class="gen-pals" id="gen-pals"></div>
+                <div class="usage-info" id="usage-info"></div>
+            </div>
+
+            <div class="preview-wrap">
+                <canvas id="preview"></canvas>
+            </div>
+
+            <div class="dl-row">
+                <button class="btn-dl" id="btn-preview">&#8595;&ensp;Preview PNG</button>
+                <button class="btn-dl" id="btn-indexed">&#8595;&ensp;Indexed PNG (SGDK)</button>
+                <button class="btn-dl" id="btn-debug">&#8595;&ensp;Tile map</button>
+                <button class="btn-dl" id="btn-report">&#8595;&ensp;Palette report</button>
+            </div>
+
+            <div id="pal-report"></div>
+        </div>
+    </div>
+
+</div><!-- /.main -->
 
 <script>
 // ── State ────────────────────────────────────────────────────────────────── //
 const state = {
-    inputData:   null,   // ImageData
-    fixedPals:   [],     // [{colors: [[r,g,b]×15], id: number}]
+    inputData:   null,
+    fixedPals:   [],
     worker:      null,
     result:      null,
     nextPalId:   0,
@@ -476,7 +823,7 @@ function addPaletteCard() {
     const hint = document.createElement('span');
     hint.className   = 'hint';
     hint.id          = `hint-${name}`;
-    hint.textContent = 'click or drop palette';
+    hint.textContent = 'click or drop';
 
     const rmBtn = document.createElement('button');
     rmBtn.className   = 'pal-remove-btn';
@@ -607,11 +954,11 @@ function extractPaletteColors(imageData) {
 }
 
 function setupDrop(zone, handler) {
-    zone.addEventListener('dragover',  e => { e.preventDefault(); zone.style.borderColor = '#89dceb'; });
-    zone.addEventListener('dragleave', () => zone.style.borderColor = '');
+    zone.addEventListener('dragover',  e => { e.preventDefault(); zone.style.outline = '2px solid #ADC6FF'; });
+    zone.addEventListener('dragleave', () => zone.style.outline = '');
     zone.addEventListener('drop', e => {
         e.preventDefault();
-        zone.style.borderColor = '';
+        zone.style.outline = '';
         if (e.dataTransfer.files[0]) handler(e.dataTransfer.files[0]);
     });
 }
@@ -650,7 +997,6 @@ function showResizeSection(w, h) {
     document.getElementById('resize-orig').textContent = `original: ${w}×${h}`;
     document.getElementById('inp-resize-w').value = w;
     document.getElementById('inp-resize-h').value = h;
-    // Reset toggle when a new image is loaded
     document.getElementById('cb-resize').checked = false;
     document.getElementById('resize-body').style.display = 'none';
 }
@@ -703,6 +1049,7 @@ document.getElementById('btn-run').addEventListener('click', () => {
     btn.disabled = true;
     document.getElementById('result').style.display = 'none';
     document.getElementById('prog-fill').style.width = '0%';
+    document.getElementById('status-text').textContent = '';
 
     state.worker = new Worker('worker.js');
 
@@ -727,9 +1074,9 @@ document.getElementById('btn-run').addEventListener('click', () => {
 
     const imageData = getResizedImageData();
     state.worker.postMessage({
-        inputData:        imageData.data,
+        inputData:          imageData.data,
         fixedPaletteColors: state.fixedPals.filter(p => p.colors !== null).map(p => p.colors),
-        numGenerate:      parseInt(document.getElementById('sl-generate').value),
+        numGenerate:        parseInt(document.getElementById('sl-generate').value),
         options: {
             W:              imageData.width,
             H:              imageData.height,
@@ -752,36 +1099,82 @@ function onResult(msg) {
     cv.height = msg.H;
     cv.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(msg.outRgb.buffer), msg.W, msg.H), 0, 0);
 
-    // Generated palette swatches
-    const genWrap = document.getElementById('gen-pals');
-    genWrap.innerHTML = '';
-    msg.generatedPaletteColors.forEach((cols, g) => {
-        const row   = document.createElement('div');
-        row.className = 'pal-row';
-        const lbl  = document.createElement('span');
-        lbl.className   = 'pal-row-label';
-        lbl.textContent = `GEN${g}:`;
-        row.appendChild(lbl);
-        const sw = document.createElement('div');
-        sw.className = 'swatches';
-        for (const [r, gv, b] of cols) {
-            const d = document.createElement('div');
-            d.className = 'swatch';
-            d.style.background = `rgb(${r},${gv},${b})`;
-            d.title = `RGB(${r}, ${gv}, ${b})`;
-            sw.appendChild(d);
-        }
-        row.appendChild(sw);
-        genWrap.appendChild(row);
-    });
-
-    // Tile usage
+    // Palette usage stats
     const total = msg.usage.reduce((a, b) => a + b, 0);
     const pct   = i => total ? Math.round(100 * msg.usage[i] / total) : 0;
-    const parts = [];
-    for (let i = 0; i < msg.numGenerate; i++) parts.push(`GEN${i} ${pct(i)}%`);
-    for (let i = 0; i < msg.numFixed;    i++) parts.push(`FIX${i} ${pct(msg.numGenerate + i)}%`);
-    document.getElementById('usage-info').textContent = parts.join('  ') + `  (${total} tiles)`;
+
+    const PAL_COLORS = [
+        { bg: 'var(--primary-container)',  text: 'var(--on-primary-cont)' },
+        { bg: '#4A3770',                   text: '#D0BCFF'                },
+        { bg: 'var(--sec-container)',      text: 'var(--on-sec-cont)'     },
+        { bg: '#633B48',                   text: '#EFB8C8'                },
+    ];
+
+    const genWrap = document.getElementById('gen-pals');
+    genWrap.innerHTML = '';
+
+    const statsEl = document.createElement('div');
+    statsEl.className = 'palette-stats';
+
+    // Stacked bar
+    const totalBar = document.createElement('div');
+    totalBar.className = 'usage-total-bar';
+    for (let pi = 0; pi < msg.palettes.length; pi++) {
+        const seg = document.createElement('div');
+        seg.className   = 'usage-total-segment';
+        seg.style.flex  = msg.usage[pi];
+        seg.style.background = PAL_COLORS[pi % PAL_COLORS.length].bg;
+        const label = pi < msg.numGenerate ? `GEN${pi}` : `FIX${pi - msg.numGenerate}`;
+        seg.title = `${label} ${pct(pi)}%`;
+        totalBar.appendChild(seg);
+    }
+    statsEl.appendChild(totalBar);
+
+    // Per-palette rows
+    for (let pi = 0; pi < msg.palettes.length; pi++) {
+        const label = pi < msg.numGenerate ? `GEN${pi}` : `FIX${pi - msg.numGenerate}`;
+        const pal   = msg.palettes[pi];
+        const c     = PAL_COLORS[pi % PAL_COLORS.length];
+
+        const row = document.createElement('div');
+        row.className = 'pal-stat-row';
+
+        const badge = document.createElement('span');
+        badge.className        = 'pal-stat-badge';
+        badge.style.background = c.bg;
+        badge.style.color      = c.text;
+        badge.textContent      = label;
+        row.appendChild(badge);
+
+        const swatches = document.createElement('div');
+        swatches.className = 'pal-stat-swatches';
+        for (let ci = 1; ci < 16; ci++) {
+            const [r, gv, b] = pal[ci];
+            const s = document.createElement('div');
+            s.className        = 'pal-stat-swatch';
+            s.style.background = `rgb(${r},${gv},${b})`;
+            s.style.opacity    = msg.colorUsed[pi][ci] ? '1' : '0';
+            s.title            = `RGB(${r}, ${gv}, ${b})`;
+            swatches.appendChild(s);
+        }
+        row.appendChild(swatches);
+
+        const pctEl = document.createElement('span');
+        pctEl.className   = 'pal-stat-pct';
+        pctEl.textContent = `${pct(pi)}%`;
+        row.appendChild(pctEl);
+
+        statsEl.appendChild(row);
+    }
+
+    // Footer
+    const footer = document.createElement('div');
+    footer.className   = 'result-meta-footer';
+    footer.textContent = `${total} tiles · ${msg.W}×${msg.H}`;
+    statsEl.appendChild(footer);
+
+    genWrap.appendChild(statsEl);
+    document.getElementById('usage-info').textContent = '';
 
     // Palette report
     const reportEl = document.getElementById('pal-report');
@@ -793,22 +1186,38 @@ function onResult(msg) {
         const pal   = msg.palettes[pi];
         const used  = msg.colorUsed[pi];
         const count = Array.from(used).slice(1).filter(Boolean).length;
-        const card  = document.createElement('div');
+
+        const card = document.createElement('div');
         card.className = 'pal-report-card';
+
         const title = document.createElement('div');
         title.className   = 'pal-report-title';
-        title.textContent = `${label} — ${count}/15 used  (${pct(pi)}% tiles)`;
+        title.textContent = `${label}  ·  ${count}/15  ·  ${pct(pi)}% tiles`;
         card.appendChild(title);
+
+        const strip = document.createElement('div');
+        strip.className = 'pal-swatch-strip';
+        for (let ci = 1; ci < 16; ci++) {
+            const [r, gv, b] = pal[ci];
+            const item = document.createElement('div');
+            item.className = 'pal-swatch-strip-item';
+            item.style.background = `rgb(${r},${gv},${b})`;
+            item.style.opacity = used[ci] ? '1' : '0';
+            item.title = `RGB(${r}, ${gv}, ${b})`;
+            strip.appendChild(item);
+        }
+        card.appendChild(strip);
+
         for (let ci = 1; ci < 16; ci++) {
             const [r, gv, b] = pal[ci];
             const entry = document.createElement('div');
-            entry.className = 'pal-report-entry' + (used[ci] ? ' used' : '');
+            entry.className = 'pal-report-entry' + (used[ci] ? ' used' : ' unused');
             const sw = document.createElement('div');
             sw.className = 'pal-report-swatch';
             sw.style.background = `rgb(${r},${gv},${b})`;
             entry.appendChild(sw);
             entry.appendChild(document.createTextNode(
-                `[${String(ci).padStart(2)}] ${used[ci] ? '✓' : '·'}  RGB(${r}, ${gv}, ${b})`
+                `[${String(ci).padStart(2)}] ${used[ci] ? '✓' : '·'}  ${r}, ${gv}, ${b}`
             ));
             card.appendChild(entry);
         }
@@ -817,7 +1226,8 @@ function onResult(msg) {
     reportEl.appendChild(grid);
 
     document.getElementById('result').style.display = 'block';
-    document.getElementById('status-text').textContent = `Done · ${msg.W}×${msg.H}`;
+    document.getElementById('status-text').textContent = `Done · ${msg.W}×${msg.H} · ${total} tiles`;
+    document.getElementById('prog-fill').style.width = '100%';
 }
 
 function buildReportText(msg) {
