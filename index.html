@@ -122,7 +122,12 @@ body {
 /* ── Input grid ──────────────────────────────────────────────────────────── */
 .input-grid {
     display: flex;
-    flex-wrap: wrap;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.input-row {
+    display: flex;
     gap: 10px;
     align-items: flex-start;
 }
@@ -200,52 +205,9 @@ body {
     border-radius: 4px;
 }
 
-#card-input { min-width: 220px; flex: 2; }
-.pal-card   { min-width: 150px; flex: 1; }
+#card-input { width: 100%; }
+.pal-card   { flex: 0 0 calc(25% - 8px); min-width: 0; }
 
-.pal-add-btn {
-    background: var(--surf-high);
-    border-radius: var(--shape-lg);
-    min-height: 88px;
-    min-width: 58px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    font-size: 22px;
-    color: var(--primary);
-    transition: background 0.15s;
-    user-select: none;
-    position: relative;
-    overflow: hidden;
-}
-
-.pal-add-btn::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: var(--primary);
-    opacity: 0;
-    transition: opacity 0.15s;
-    pointer-events: none;
-}
-
-.pal-add-btn:hover::before { opacity: 0.08; }
-
-.pal-remove-btn {
-    font-size: 11px;
-    color: var(--error);
-    cursor: pointer;
-    margin-top: 6px;
-    background: none;
-    border: none;
-    font-family: inherit;
-    padding: 0;
-    opacity: 0.55;
-    position: relative;
-}
-
-.pal-remove-btn:hover { opacity: 1; }
 
 /* ── Resize card ─────────────────────────────────────────────────────────── */
 .resize-card {
@@ -650,14 +612,40 @@ button:disabled { opacity: 0.38; cursor: default; pointer-events: none; }
     <div class="card">
         <div class="card-title">Images</div>
         <div class="input-grid" id="input-grid">
-            <div class="input-card" id="card-input" onclick="document.getElementById('fi-input').click()">
-                <input type="file" id="fi-input" accept="image/*" style="display:none">
-                <label>Input image</label>
-                <canvas id="cv-input" style="display:none"></canvas>
-                <span class="hint" id="hint-input">click or drop</span>
+            <div class="input-row">
+                <div class="input-card" id="card-input" onclick="document.getElementById('fi-input').click()">
+                    <input type="file" id="fi-input" accept="image/*" style="display:none">
+                    <label>Input image</label>
+                    <canvas id="cv-input" style="display:none"></canvas>
+                    <span class="hint" id="hint-input">click or drop</span>
+                </div>
             </div>
-            <!-- fixed palette cards injected here by JS -->
-            <div class="pal-add-btn" id="btn-add-pal" title="Add fixed palette">+</div>
+            <div class="input-row">
+                <div class="input-card pal-card" id="zone-pal0" onclick="document.getElementById('fi-pal0').click()">
+                    <input type="file" id="fi-pal0" accept="image/*" style="display:none">
+                    <label>PAL 0</label>
+                    <div class="pal-canvas-wrap"><canvas id="cv-pal0" style="display:none"></canvas></div>
+                    <span class="hint" id="hint-pal0">click or drop</span>
+                </div>
+                <div class="input-card pal-card" id="zone-pal1" onclick="document.getElementById('fi-pal1').click()">
+                    <input type="file" id="fi-pal1" accept="image/*" style="display:none">
+                    <label>PAL 1</label>
+                    <div class="pal-canvas-wrap"><canvas id="cv-pal1" style="display:none"></canvas></div>
+                    <span class="hint" id="hint-pal1">click or drop</span>
+                </div>
+                <div class="input-card pal-card" id="zone-pal2" onclick="document.getElementById('fi-pal2').click()">
+                    <input type="file" id="fi-pal2" accept="image/*" style="display:none">
+                    <label>PAL 2</label>
+                    <div class="pal-canvas-wrap"><canvas id="cv-pal2" style="display:none"></canvas></div>
+                    <span class="hint" id="hint-pal2">click or drop</span>
+                </div>
+                <div class="input-card pal-card" id="zone-pal3" onclick="document.getElementById('fi-pal3').click()">
+                    <input type="file" id="fi-pal3" accept="image/*" style="display:none">
+                    <label>PAL 3</label>
+                    <div class="pal-canvas-wrap"><canvas id="cv-pal3" style="display:none"></canvas></div>
+                    <span class="hint" id="hint-pal3">click or drop</span>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -788,97 +776,33 @@ button:disabled { opacity: 0.38; cursor: default; pointer-events: none; }
 <script>
 // ── State ────────────────────────────────────────────────────────────────── //
 const state = {
-    inputData:   null,
-    fixedPals:   [],
-    worker:      null,
-    result:      null,
-    nextPalId:   0,
+    inputData: null,
+    palColors: [null, null, null, null],   // one entry per fixed palette slot
+    worker:    null,
+    result:    null,
 };
 
 // ── Fixed palette management ─────────────────────────────────────────────── //
-function addPaletteCard() {
-    const id   = state.nextPalId++;
-    const name = `pal${id}`;
-
-    const card = document.createElement('div');
-    card.className  = 'input-card pal-card';
-    card.id         = `zone-${name}`;
-
-    const fi = document.createElement('input');
-    fi.type   = 'file';
-    fi.accept = 'image/*';
-    fi.id     = `fi-${name}`;
-    fi.style.display = 'none';
-
-    const lbl = document.createElement('label');
-    lbl.textContent = `FIXED PAL ${state.fixedPals.length}`;
-
-    const wrap = document.createElement('div');
-    wrap.className = 'pal-canvas-wrap';
-    const cv = document.createElement('canvas');
-    cv.id    = `cv-${name}`;
-    cv.style.display = 'none';
-    wrap.appendChild(cv);
-
-    const hint = document.createElement('span');
-    hint.className   = 'hint';
-    hint.id          = `hint-${name}`;
-    hint.textContent = 'click or drop';
-
-    const rmBtn = document.createElement('button');
-    rmBtn.className   = 'pal-remove-btn';
-    rmBtn.textContent = '✕ remove';
-    rmBtn.onclick     = (e) => { e.stopPropagation(); removePaletteCard(id, card); };
-
-    card.appendChild(fi);
-    card.appendChild(lbl);
-    card.appendChild(wrap);
-    card.appendChild(hint);
-    card.appendChild(rmBtn);
-    card.onclick = () => fi.click();
-
-    fi.addEventListener('change', e => {
-        if (e.target.files[0]) handlePaletteFile(id, name, e.target.files[0]);
-    });
-    setupDrop(card, file => handlePaletteFile(id, name, file));
-
-    const grid   = document.getElementById('input-grid');
-    const addBtn = document.getElementById('btn-add-pal');
-    grid.insertBefore(card, addBtn);
-
-    state.fixedPals.push({ id, colors: null });
-    renumberPaletteLabels();
-    updateGenerateMax();
-    checkReady();
-    return id;
-}
-
-function removePaletteCard(id, card) {
-    card.remove();
-    state.fixedPals = state.fixedPals.filter(p => p.id !== id);
-    renumberPaletteLabels();
-    updateGenerateMax();
-    checkReady();
-}
-
-function renumberPaletteLabels() {
-    state.fixedPals.forEach((p, i) => {
-        const zone = document.getElementById(`zone-pal${p.id}`);
-        if (zone) zone.querySelector('label').textContent = `FIXED PAL ${i}`;
-    });
-}
-
-async function handlePaletteFile(id, name, file) {
+async function handlePaletteFile(slot, file) {
     try {
+        const name      = `pal${slot}`;
         const imageData = await readImageData(file, `cv-${name}`);
         document.getElementById(`cv-${name}`).style.display   = 'block';
         document.getElementById(`hint-${name}`).style.display = 'none';
         document.getElementById(`zone-${name}`).classList.add('loaded');
-        const colors = extractPaletteColors(imageData);
-        const entry  = state.fixedPals.find(p => p.id === id);
-        if (entry) entry.colors = colors;
+        state.palColors[slot] = extractPaletteColors(imageData);
+        updateGenerateMax();
         checkReady();
     } catch (err) { console.error(err); }
+}
+
+// Wire up the 4 static palette slots
+for (let i = 0; i < 4; i++) {
+    const slot = i;
+    document.getElementById(`fi-pal${slot}`).addEventListener('change', e => {
+        if (e.target.files[0]) handlePaletteFile(slot, e.target.files[0]);
+    });
+    setupDrop(document.getElementById(`zone-pal${slot}`), file => handlePaletteFile(slot, file));
 }
 
 function updateDitherUI() {
@@ -902,22 +826,15 @@ function updateDitherUI() {
 }
 
 function updateGenerateMax() {
-    const maxGen = Math.min(4, Math.max(0, 4 - state.fixedPals.length));
+    const loadedFixed = state.palColors.filter(c => c !== null).length;
+    const maxGen = Math.min(4, Math.max(0, 4 - loadedFixed));
     const sl = document.getElementById('sl-generate');
     sl.max = maxGen;
     if (parseInt(sl.value) > maxGen) {
         sl.value = maxGen;
         document.getElementById('v-generate').textContent = maxGen;
     }
-    document.getElementById('btn-add-pal').style.display =
-        state.fixedPals.length >= 4 ? 'none' : '';
 }
-
-document.getElementById('btn-add-pal').addEventListener('click', addPaletteCard);
-
-// Bootstrap two palette slots
-addPaletteCard();
-addPaletteCard();
 
 // ── File loading ──────────────────────────────────────────────────────────── //
 function readImageData(file, canvasId) {
@@ -966,7 +883,7 @@ function setupDrop(zone, handler) {
 function checkReady() {
     const hasInput    = !!state.inputData;
     const numGenerate = parseInt(document.getElementById('sl-generate').value);
-    const numFixed    = state.fixedPals.filter(p => p.colors !== null).length;
+    const numFixed    = state.palColors.filter(c => c !== null).length;
     document.getElementById('btn-run').disabled = !hasInput || (numGenerate === 0 && numFixed === 0);
 }
 
@@ -1075,7 +992,7 @@ document.getElementById('btn-run').addEventListener('click', () => {
     const imageData = getResizedImageData();
     state.worker.postMessage({
         inputData:          imageData.data,
-        fixedPaletteColors: state.fixedPals.filter(p => p.colors !== null).map(p => p.colors),
+        fixedPaletteColors: state.palColors.filter(c => c !== null),
         numGenerate:        parseInt(document.getElementById('sl-generate').value),
         options: {
             W:              imageData.width,

@@ -712,6 +712,12 @@ async function processImage({ inputData, fixedPaletteColors, numGenerate, W, H, 
         palettes = [...genPalettes, ...fixedPalettes];
     }
 
+    // When numGenerate=0, the loop above never runs — still need an initial tile assignment.
+    if (!tileMap) {
+        onProgress(70, 'Assigning tiles...');
+        ({ tileMap, TX, TY } = assignTiles(inputData, palettes, W, H, numGenerate, fixedBias));
+    }
+
     // ── Spatial smoothing ──────────────────────────────────────────────────── //
     if (doSmooth) {
         onProgress(73, 'Enforcing row palette bands...');
