@@ -23,11 +23,11 @@ async function deflate(data) {
 
 onmessage = async function (e) {
     const { inputData, fixedPaletteColors, numGenerate, options } = e.data;
-    const { W, H, residualThr, maxIter, ditherMode, ditherStrength, doSmooth, fixedBias, seed } = options;
+    const { W, H, residualThr, maxIter, ditherMode, ditherStrength, doSmooth, fixedBias, seed, quantMethod, quantDistance } = options;
 
     try {
         const result = await processImage(
-            { inputData, fixedPaletteColors, numGenerate, W, H, ditherMode, ditherStrength, residualThr, maxIter, doSmooth, fixedBias, seed },
+            { inputData, fixedPaletteColors, numGenerate, W, H, ditherMode, ditherStrength, residualThr, maxIter, doSmooth, fixedBias, seed, quantMethod, quantDistance },
             deflate,
             (pct, text) => postMessage({ type: 'progress', pct, text })
         );

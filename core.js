@@ -180,7 +180,7 @@ function snapToMD(c) {
 // Pre-snapping the input guarantees all output colors land on the MD grid,
 // eliminating duplicates and wasted slots that post-snap causes.
 // Falls back to k-means when image-q is unavailable (browser).
-function wuQuantMD(samples, k, rng) {
+function wuQuantMD(samples, k, rng, quantMethod, quantDistance) {
     if (!_iq || k <= 0 || samples.length < k) {
         return kmeans(samples, k, 30, rng).map(snapToMD);
     }
@@ -194,7 +194,11 @@ function wuQuantMD(samples, k, rng) {
         buf[i * 4 + 3] = 255;
     }
     const container = _iq.utils.PointContainer.fromUint8Array(buf, snapped.length, 1);
-    const palette   = _iq.buildPaletteSync([container], { colors: k, paletteQuantization: 'wuquant' });
+    const palette   = _iq.buildPaletteSync([container], {
+        colors:               k,
+        paletteQuantization:  quantMethod  || 'wuquant',
+        colorDistanceFormula: quantDistance || 'euclidean',
+    });
     return palette.getPointContainer().getPointArray().map(p => [p.r, p.g, p.b]);
 }
 
@@ -206,7 +210,7 @@ function wuQuantMD(samples, k, rng) {
 // Phase 2 — Fill: remaining slots are filled with K-means on pixels still not
 //   well covered by the inherited colors.
 //
-function buildPal0(samples, rng, inheritCandidates, thr2) {
+function buildPal0(samples, rng, inheritCandidates, thr2, quantMethod, quantDistance) {
     const MAX_SAMPLES = 8000;
     let s = samples;
     if (samples.length > MAX_SAMPLES) {
@@ -246,7 +250,7 @@ function buildPal0(samples, rng, inheritCandidates, thr2) {
     const k    = N_PAL_COLORS - unique.length;
     const base = residual.length >= k ? residual : s;
     if (k > 0) {
-        for (const c of wuQuantMD(base, k, rng)) {
+        for (const c of wuQuantMD(base, k, rng, quantMethod, quantDistance)) {
             const key = c[0] * 65536 + c[1] * 256 + c[2];
             if (!seenKeys.has(key)) { seenKeys.add(key); unique.push(c); }
             if (unique.length === N_PAL_COLORS) break;
@@ -444,10 +448,21 @@ function smoothTileMap(tileMap, imageData, palettes, TX, TY, W) {
     return m;
 }
 
-// ── Floyd-Steinberg error diffusion render ────────────────────────────────── //
+// ── Error diffusion kernels ───────────────────────────────────────────────── //
+// Each entry: [dx, dy, numerator]; errors are scaled by (numerator / div) * strength.
+const DIFF_KERNELS = {
+    fs:       { div: 16, pts: [[ 1,0,7],[-1,1,3],[ 0,1,5],[ 1,1,1]] },
+    atkinson: { div:  8, pts: [[ 1,0,1],[ 2,0,1],[-1,1,1],[ 0,1,1],[ 1,1,1],[ 0,2,1]] },
+    stucki:   { div: 42, pts: [[ 1,0,8],[ 2,0,4],[-2,1,2],[-1,1,4],[ 0,1,8],[ 1,1,4],[ 2,1,2],[-2,2,1],[-1,2,2],[ 0,2,4],[ 1,2,2],[ 2,2,1]] },
+    jarvis:   { div: 48, pts: [[ 1,0,7],[ 2,0,5],[-2,1,3],[-1,1,5],[ 0,1,7],[ 1,1,5],[ 2,1,3],[-2,2,1],[-1,2,3],[ 0,2,5],[ 1,2,3],[ 2,2,1]] },
+    sierra:   { div: 32, pts: [[ 1,0,5],[ 2,0,3],[-2,1,2],[-1,1,4],[ 0,1,5],[ 1,1,4],[ 2,1,2],[-1,2,2],[ 0,2,3],[ 1,2,2]] },
+};
+
+// ── Generic error diffusion render ───────────────────────────────────────── //
 // Error propagates across the whole image; each pixel uses its tile's palette.
-// This gives much better visual quality than ordered dithering for static images.
-function renderFloydSteinberg(imageData, W, H, tileMap, palettes, TX, strength) {
+// kernelName selects the diffusion matrix (fs, atkinson, stucki, jarvis, sierra).
+function renderErrorDiffusion(imageData, W, H, tileMap, palettes, TX, strength, kernelName) {
+    const kernel = DIFF_KERNELS[kernelName] || DIFF_KERNELS.fs;
     const outRgb = new Uint8ClampedArray(W * H * 4);
     const outIdx = new Uint8Array(W * H);
     const errR   = new Float32Array(W * H);
@@ -479,29 +494,16 @@ function renderFloydSteinberg(imageData, W, H, tileMap, palettes, TX, strength) 
             // a green tree pixel into gray when it belongs to FIX0).
             const er = (r - col[0]) * s, eg = (g - col[1]) * s, eb = (b - col[2]) * s;
             const samePal = (nx, ny) =>
+                nx >= 0 && nx < W && ny >= 0 && ny < H &&
                 tileMap[Math.floor(ny / TILE) * TX + Math.floor(nx / TILE)] === pi;
 
-            if (x + 1 < W && samePal(x + 1, y)) {
-                errR[idx + 1]     += er * 7 / 16;
-                errG[idx + 1]     += eg * 7 / 16;
-                errB[idx + 1]     += eb * 7 / 16;
-            }
-            if (y + 1 < H) {
-                if (x > 0 && samePal(x - 1, y + 1)) {
-                    errR[idx + W - 1] += er * 3 / 16;
-                    errG[idx + W - 1] += eg * 3 / 16;
-                    errB[idx + W - 1] += eb * 3 / 16;
-                }
-                if (samePal(x, y + 1)) {
-                    errR[idx + W]     += er * 5 / 16;
-                    errG[idx + W]     += eg * 5 / 16;
-                    errB[idx + W]     += eb * 5 / 16;
-                }
-                if (x + 1 < W && samePal(x + 1, y + 1)) {
-                    errR[idx + W + 1] += er * 1 / 16;
-                    errG[idx + W + 1] += eg * 1 / 16;
-                    errB[idx + W + 1] += eb * 1 / 16;
-                }
+            for (const [dx, dy, w] of kernel.pts) {
+                const nx = x + dx, ny = y + dy;
+                if (!samePal(nx, ny)) continue;
+                const ni = ny * W + nx, f = w / kernel.div;
+                errR[ni] += er * f;
+                errG[ni] += eg * f;
+                errB[ni] += eb * f;
             }
         }
     }
@@ -597,10 +599,10 @@ function collectGenPixels(tileMap, inputData, TX, TY, W, numGenerate) {
 }
 
 // ── Rebuild generated palettes from their assigned pixels ─────────────────── //
-function rebuildGenPalettes(genPalettes, genPixels, rng, allFixedColors, thr2) {
+function rebuildGenPalettes(genPalettes, genPixels, rng, allFixedColors, thr2, quantMethod, quantDistance) {
     return genPalettes.map((pal, g) =>
         genPixels[g].length >= N_PAL_COLORS
-            ? buildPal0(genPixels[g], rng, allFixedColors, thr2)
+            ? buildPal0(genPixels[g], rng, allFixedColors, thr2, quantMethod, quantDistance)
             : pal
     );
 }
@@ -667,7 +669,7 @@ function buildUsageStats(tileMap, outIdx, totalPalettes) {
 //   slots 0..numGenerate-1          → generated palettes
 //   slots numGenerate..total-1      → fixed palettes (same order as input)
 //
-async function processImage({ inputData, fixedPaletteColors, numGenerate, W, H, ditherStrength, ditherMode, residualThr, maxIter, doSmooth, fixedBias, seed }, deflate, onProgress) {
+async function processImage({ inputData, fixedPaletteColors, numGenerate, W, H, ditherStrength, ditherMode, residualThr, maxIter, doSmooth, fixedBias, seed, quantMethod, quantDistance }, deflate, onProgress) {
     if (fixedBias === undefined) fixedBias = 0.8;
     const rng = makePrng(seed !== undefined ? seed : 1);
     if (!numGenerate || numGenerate < 0) numGenerate = 0;
@@ -697,7 +699,7 @@ async function processImage({ inputData, fixedPaletteColors, numGenerate, W, H, 
         const groupSize = Math.ceil(sorted.length / numGenerate);
         genPalettes = Array.from({ length: numGenerate }, (_, g) => {
             const group = sorted.slice(g * groupSize, (g + 1) * groupSize);
-            return buildPal0(group.length >= N_PAL_COLORS ? group : initSamples, rng, allFixedColors, thr2);
+            return buildPal0(group.length >= N_PAL_COLORS ? group : initSamples, rng, allFixedColors, thr2, quantMethod, quantDistance);
         });
     }
 
@@ -708,7 +710,7 @@ async function processImage({ inputData, fixedPaletteColors, numGenerate, W, H, 
     for (let iter = 1; iter <= (numGenerate > 0 ? maxIter : 0); iter++) {
         onProgress(15 + (iter / maxIter) * 55, `Iteration ${iter}/${maxIter}...`);
         ({ tileMap, TX, TY } = assignTiles(inputData, palettes, W, H, numGenerate, fixedBias));
-        genPalettes = rebuildGenPalettes(genPalettes, collectGenPixels(tileMap, inputData, TX, TY, W, numGenerate), rng, allFixedColors, thr2);
+        genPalettes = rebuildGenPalettes(genPalettes, collectGenPixels(tileMap, inputData, TX, TY, W, numGenerate), rng, allFixedColors, thr2, quantMethod, quantDistance);
         palettes = [...genPalettes, ...fixedPalettes];
     }
 
@@ -724,22 +726,23 @@ async function processImage({ inputData, fixedPaletteColors, numGenerate, W, H, 
         tileMap = enforceRowMajority(tileMap, inputData, palettes, TX, TY, W);
         onProgress(77, 'Smoothing tile islands...');
         tileMap = smoothTileMap(tileMap, inputData, palettes, TX, TY, W);
-        genPalettes = rebuildGenPalettes(genPalettes, collectGenPixels(tileMap, inputData, TX, TY, W, numGenerate), rng, allFixedColors, thr2);
+        genPalettes = rebuildGenPalettes(genPalettes, collectGenPixels(tileMap, inputData, TX, TY, W, numGenerate), rng, allFixedColors, thr2, quantMethod, quantDistance);
         palettes = [...genPalettes, ...fixedPalettes];
     }
 
     // ── Render + encode ────────────────────────────────────────────────────── //
-    const mode = ditherMode || 'fs';
+    const mode = ditherMode || 'none';
     let outRgb, outIdx;
     if (mode === 'bayer') {
-        onProgress(80, 'Rendering (Bayer dither)...');
+        onProgress(80, 'Rendering (Bayer)...');
         ({ outRgb, outIdx } = renderBayer(inputData, W, H, tileMap, palettes, TX, ditherStrength || 0));
     } else if (mode === 'none') {
-        onProgress(80, 'Rendering (no dither)...');
+        onProgress(80, 'Rendering...');
         ({ outRgb, outIdx } = renderBayer(inputData, W, H, tileMap, palettes, TX, 0));
     } else {
-        onProgress(80, 'Rendering (Floyd-Steinberg dither)...');
-        ({ outRgb, outIdx } = renderFloydSteinberg(inputData, W, H, tileMap, palettes, TX, (ditherStrength || 75) / 100));
+        const label = { fs: 'Floyd-Steinberg', atkinson: 'Atkinson', stucki: 'Stucki', jarvis: 'Jarvis', sierra: 'Sierra' }[mode] || mode;
+        onProgress(80, `Rendering (${label})...`);
+        ({ outRgb, outIdx } = renderErrorDiffusion(inputData, W, H, tileMap, palettes, TX, (ditherStrength || 75) / 100, mode));
     }
 
     onProgress(90, 'Encoding PNG...');

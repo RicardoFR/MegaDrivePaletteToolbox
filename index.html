@@ -676,15 +676,19 @@ button:disabled { opacity: 0.38; cursor: default; pointer-events: none; }
             <div class="ctrl">
                 <div class="ctrl-label"><span class="ctrl-name">Dither mode</span></div>
                 <select id="sel-dither-mode" onchange="updateDitherUI()">
-                    <option value="fs">Floyd-Steinberg</option>
-                    <option value="bayer">Bayer ordered</option>
                     <option value="none" selected>None</option>
+                    <option value="fs">Floyd-Steinberg</option>
+                    <option value="atkinson">Atkinson</option>
+                    <option value="stucki">Stucki</option>
+                    <option value="jarvis">Jarvis-Judice-Ninke</option>
+                    <option value="sierra">Sierra</option>
+                    <option value="bayer">Bayer ordered</option>
                 </select>
             </div>
 
             <div class="ctrl" id="ctrl-dither-strength" style="display:none">
                 <div class="ctrl-label">
-                    <span class="ctrl-name" id="lbl-dither">FS strength</span>
+                    <span class="ctrl-name" id="lbl-dither">Diffusion strength</span>
                     <span class="ctrl-val" id="v-dither">75</span>
                 </div>
                 <input type="range" id="sl-dither" min="0" max="100" value="75"
@@ -732,6 +736,29 @@ button:disabled { opacity: 0.38; cursor: default; pointer-events: none; }
                     <input type="checkbox" id="cb-smooth" checked>
                     Tile smoothing
                 </label>
+            </div>
+
+            <div class="ctrl">
+                <div class="ctrl-label"><span class="ctrl-name">Quantization method</span></div>
+                <select id="sel-quant-method">
+                    <option value="wuquant" selected>Wu (WuQuant)</option>
+                    <option value="neuquant">NeuQuant</option>
+                    <option value="neuquant-float">NeuQuant float</option>
+                    <option value="rgbquant">RGBQuant</option>
+                </select>
+            </div>
+
+            <div class="ctrl">
+                <div class="ctrl-label"><span class="ctrl-name">Quantization distance</span></div>
+                <select id="sel-quant-distance">
+                    <option value="euclidean" selected>Euclidean</option>
+                    <option value="euclidean-bt709-noalpha">Euclidean BT.709</option>
+                    <option value="cie94-graphic-arts">CIE94 graphic arts</option>
+                    <option value="cie94-textiles">CIE94 textiles</option>
+                    <option value="ciede2000">CIEDE2000</option>
+                    <option value="manhattan">Manhattan</option>
+                    <option value="pngquant">PNGQuant</option>
+                </select>
             </div>
         </div>
     </div>
@@ -819,7 +846,7 @@ function updateDitherUI() {
         document.getElementById('v-dither').textContent = sl.value;
     } else {
         ctrl.style.display = '';
-        lbl.textContent = 'FS strength';
+        lbl.textContent = 'Diffusion strength';
         sl.max = 100;
         document.getElementById('v-dither').textContent = sl.value;
     }
@@ -1003,6 +1030,8 @@ document.getElementById('btn-run').addEventListener('click', () => {
             maxIter:        parseInt(document.getElementById('sl-iter').value),
             fixedBias:      parseInt(document.getElementById('sl-fixed-bias').value) / 100,
             doSmooth:       document.getElementById('cb-smooth').checked,
+            quantMethod:    document.getElementById('sel-quant-method').value,
+            quantDistance:  document.getElementById('sel-quant-distance').value,
         },
     });
 });
