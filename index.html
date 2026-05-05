@@ -755,7 +755,7 @@ button:disabled { opacity: 0.38; cursor: default; pointer-events: none; }
 <div class="top-bar">
     <div class="top-bar-icon">MD</div>
     <span class="top-bar-title">Mega Drive Palette Toolbox</span>
-    <span class="top-bar-sub">8&times;8 tiles &middot; 4 palettes &middot; OKLab &middot; WuQuant &middot; AI seg</span>
+    <span class="top-bar-sub">8&times;8 tiles &middot; 4 palettes &middot; OKLab &middot; WuQuant</span>
 </div>
 
 <div class="main">
@@ -895,9 +895,9 @@ button:disabled { opacity: 0.38; cursor: default; pointer-events: none; }
             <div class="ctrl">
                 <div class="ctrl-label">
                     <span class="ctrl-name">Refinement iterations</span>
-                    <span class="ctrl-val" id="v-iter">6</span>
+                    <span class="ctrl-val" id="v-iter">12</span>
                 </div>
-                <input type="range" id="sl-iter" min="1" max="12" value="6"
+                <input type="range" id="sl-iter" min="1" max="12" value="12"
                        oninput="document.getElementById('v-iter').textContent=this.value">
             </div>
 
@@ -939,9 +939,9 @@ button:disabled { opacity: 0.38; cursor: default; pointer-events: none; }
             <div class="ctrl">
                 <div class="ctrl-label"><span class="ctrl-name">Quantization distance</span></div>
                 <select id="sel-quant-distance">
-                    <option value="euclidean" selected>Euclidean</option>
+                    <option value="euclidean">Euclidean</option>
                     <option value="euclidean-bt709-noalpha">Euclidean BT.709</option>
-                    <option value="cie94-graphic-arts">CIE94 graphic arts</option>
+                    <option value="cie94-graphic-arts" selected>CIE94 graphic arts</option>
                     <option value="cie94-textiles">CIE94 textiles</option>
                     <option value="ciede2000">CIEDE2000</option>
                     <option value="manhattan">Manhattan</option>
@@ -1004,9 +1004,8 @@ button:disabled { opacity: 0.38; cursor: default; pointer-events: none; }
 // ── State ────────────────────────────────────────────────────────────────── //
 const state = {
     inputData: null,
-    palColors: [null, null, null, null],   // one entry per fixed palette slot
+    palColors: [null, null, null, null],
     worker:    null,
-    segWorker: null,
     result:    null,
 };
 
@@ -1246,8 +1245,7 @@ function getResizedImageData() {
 
 // ── Processing ────────────────────────────────────────────────────────────── //
 document.getElementById('btn-run').addEventListener('click', () => {
-    if (state.worker)    state.worker.terminate();
-    if (state.segWorker) state.segWorker.terminate();
+    if (state.worker) state.worker.terminate();
 
     const btn = document.getElementById('btn-run');
     btn.disabled = true;
@@ -1289,85 +1287,39 @@ document.getElementById('btn-run').addEventListener('click', () => {
         quantDistance:  document.getElementById('sel-quant-distance').value,
     };
 
-    function runMainWorker(tileSemanticGroups) {
-        log(`worker.js starting…  input: ${imageData.width}×${imageData.height}`);
-        state.worker = new Worker('worker.js');
+    log(`worker.js starting…  input: ${imageData.width}×${imageData.height}`);
+    state.worker = new Worker('worker.js');
 
-        const effectiveOptions = options;
-
-        state.worker.onmessage = e => {
-            const msg = e.data;
-            if (msg.type === 'progress') {
-                const pct = tileSemanticGroups ? 50 + (msg.pct * 0.5 | 0) : msg.pct;
-                document.getElementById('prog-fill').style.width = pct + '%';
-                document.getElementById('status-text').textContent = msg.text;
-                log(msg.text);
-            } else if (msg.type === 'done') {
-                log(`Done  ${msg.W}×${msg.H}  ${msg.palettes.length} palettes`, 'ok');
-                onResult(msg);
-                btn.disabled = false;
-            } else if (msg.type === 'error') {
-                document.getElementById('status-text').textContent = '✗ ' + msg.message;
-                log('ERROR: ' + msg.message, 'error');
-                btn.disabled = false;
-            }
-        };
-
-        state.worker.onerror = err => {
-            document.getElementById('status-text').textContent = '✗ Error: ' + err.message;
-            log('WORKER ERROR: ' + err.message, 'error');
+    state.worker.onmessage = e => {
+        const msg = e.data;
+        if (msg.type === 'progress') {
+            document.getElementById('prog-fill').style.width = msg.pct + '%';
+            document.getElementById('status-text').textContent = msg.text;
+            log(msg.text);
+        } else if (msg.type === 'done') {
+            log(`Done  ${msg.W}×${msg.H}  ${msg.palettes.length} palettes`, 'ok');
+            onResult(msg);
             btn.disabled = false;
-        };
+        } else if (msg.type === 'error') {
+            document.getElementById('status-text').textContent = '✗ ' + msg.message;
+            log('ERROR: ' + msg.message, 'error');
+            btn.disabled = false;
+        }
+    };
 
-        state.worker.postMessage({
-            inputData: imageData.data,
-            fixedPaletteColors,
-            partialPaletteConfigs,
-            tileSemanticGroups: tileSemanticGroups || null,
-            numGenerate,
-            options: effectiveOptions,
-        });
-    }
+    state.worker.onerror = err => {
+        document.getElementById('status-text').textContent = '✗ Error: ' + err.message;
+        log('WORKER ERROR: ' + err.message, 'error');
+        btn.disabled = false;
+    };
 
-    if (true) {
-        // Phase 1: semantic segmentation in module worker
-        log('seg-worker.js starting…');
-        state.segWorker = new Worker('seg-worker.js', { type: 'module' });
-
-        state.segWorker.onmessage = e => {
-            const msg = e.data;
-            if (msg.type === 'progress') {
-                document.getElementById('prog-fill').style.width = (msg.pct * 0.5 | 0) + '%';
-                document.getElementById('status-text').textContent = msg.text;
-                log(`[seg] ${msg.text}`);
-            } else if (msg.type === 'done') {
-                document.getElementById('prog-fill').style.width = '50%';
-                document.getElementById('status-text').textContent = 'Segmentation done — building palettes…';
-                log(`Segmentation done — ${numActive} groups — handing off`, 'ok');
-                state.segWorker.terminate();
-                runMainWorker(msg.tileGroup);
-            } else if (msg.type === 'error') {
-                document.getElementById('status-text').textContent = '✗ Segmentation error: ' + msg.message + ' — running without AI';
-                log('SEG ERROR: ' + msg.message + ' (falling back)', 'error');
-                state.segWorker.terminate();
-                runMainWorker(null);
-            }
-        };
-
-        state.segWorker.onerror = err => {
-            document.getElementById('status-text').textContent = '✗ Seg worker error: ' + err.message + ' — running without AI';
-            log('SEG WORKER ERROR: ' + err.message + ' (falling back)', 'error');
-            state.segWorker.terminate();
-            runMainWorker(null);
-        };
-
-        state.segWorker.postMessage({
-            imageData: imageData.data,
-            W:         imageData.width,
-            H:         imageData.height,
-            numGroups: numActive,
-        });
-    }
+    state.worker.postMessage({
+        inputData: imageData.data,
+        fixedPaletteColors,
+        partialPaletteConfigs,
+        numGenerate,
+        options,
+    });
 });
 
 function onResult(msg) {
