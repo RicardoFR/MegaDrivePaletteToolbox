@@ -26,6 +26,10 @@
  *   QUANT_METHOD=wuquant   Quantization: wuquant, neuquant, neuquant-float, rgbquant (default wuquant)
  *   QUANT_DISTANCE=euclidean  Color distance for quantization: euclidean, euclidean-bt709-noalpha,
  *                              cie94-graphic-arts, cie94-textiles, ciede2000, manhattan, pngquant
+ *   PARTIAL_PAL=0:8,1:4   Comma-separated index:reservedColors pairs.
+ *                          Converts those palette files into partial palettes:
+ *                          `reservedColors` slots kept from file, remaining auto-generated.
+ *                          Example: PARTIAL_PAL=0:8 keeps first 8 colors of pal[0] fixed.
  */
 
 const { Jimp }       = require('jimp');
@@ -57,6 +61,15 @@ const SEED            = parseInt(process.env.SEED         ?? '1');
 const QUANT_METHOD    = process.env.QUANT_METHOD   ?? 'wuquant';
 const QUANT_DISTANCE  = process.env.QUANT_DISTANCE ?? 'euclidean';
 
+// Parse PARTIAL_PAL env: "0:8,2:4" → Map { 0 => 8, 2 => 4 }
+const PARTIAL_PAL_MAP = new Map();
+if (process.env.PARTIAL_PAL) {
+    for (const part of process.env.PARTIAL_PAL.split(',')) {
+        const [idx, n] = part.trim().split(':').map(Number);
+        if (!isNaN(idx) && !isNaN(n)) PARTIAL_PAL_MAP.set(idx, Math.max(1, Math.min(14, n)));
+    }
+}
+
 // ── deflate: Node.js zlib ─────────────────────────────────────────────────── //
 function deflate(data) {
     return new Promise((resolve, reject) =>
@@ -67,7 +80,10 @@ function deflate(data) {
 // ── Main ──────────────────────────────────────────────────────────────────── //
 async function main() {
     console.log(`Input:    ${INPUT_PATH}`);
-    PAL_PATHS.forEach((p, i) => console.log(`Fixed[${i}]: ${p}`));
+    PAL_PATHS.forEach((p, i) => {
+        const tag = PARTIAL_PAL_MAP.has(i) ? `Partial[${i}] (${PARTIAL_PAL_MAP.get(i)} reserved)` : `Fixed[${i}]`;
+        console.log(`${tag}: ${p}`);
+    });
     console.log(`Output:   ${OUT_DIR}`);
     console.log(`Generate: ${NUM_GENERATE}  Dither: ${DITHER_MODE}${DITHER_MODE === 'bayer' ? `(${DITHER_STRENGTH})` : ''}  Residual: ${RESIDUAL_THR.toFixed(0)}  Iters: ${MAX_ITER}  Smooth: ${DO_SMOOTH}  Seed: ${SEED}`);
     console.log(`Quant: ${QUANT_METHOD}  Distance: ${QUANT_DISTANCE}`);
@@ -93,12 +109,21 @@ async function main() {
         return colors;
     }
 
-    const inputData        = new Uint8ClampedArray(imgInput.bitmap.data.buffer);
-    const fixedPaletteColors = palImgs.map(extractPalette);
+    const inputData              = new Uint8ClampedArray(imgInput.bitmap.data.buffer);
+    const allPalColors           = palImgs.map(extractPalette);
+    const fixedPaletteColors     = [];
+    const partialPaletteConfigs  = [];
+    for (let i = 0; i < allPalColors.length; i++) {
+        if (PARTIAL_PAL_MAP.has(i)) {
+            partialPaletteConfigs.push({ colors: allPalColors[i].slice(0, PARTIAL_PAL_MAP.get(i)) });
+        } else {
+            fixedPaletteColors.push(allPalColors[i]);
+        }
+    }
 
     let lastPct = -1;
     const result = await processImage(
-        { inputData, fixedPaletteColors, numGenerate: NUM_GENERATE, W, H,
+        { inputData, fixedPaletteColors, partialPaletteConfigs, numGenerate: NUM_GENERATE, W, H,
           ditherMode: DITHER_MODE, ditherStrength: DITHER_STRENGTH, residualThr: RESIDUAL_THR,
           maxIter: MAX_ITER, doSmooth: DO_SMOOTH, fixedBias: FIXED_BIAS, seed: SEED,
           quantMethod: QUANT_METHOD, quantDistance: QUANT_DISTANCE },
@@ -135,9 +160,14 @@ async function main() {
     const total = result.usage.reduce((a, b) => a + b, 0);
     const pct   = i => total ? Math.round(100 * result.usage[i] / total) : 0;
 
+    function palLabel(pi) {
+        if (pi < result.numGenerate) return `GEN${pi}`;
+        if (pi < result.numGenerate + (result.numPartial || 0)) return `PART${pi - result.numGenerate}`;
+        return `FIX${pi - result.numGenerate - (result.numPartial || 0)}`;
+    }
+
     const usageParts = [];
-    for (let i = 0; i < result.numGenerate; i++) usageParts.push(`GEN${i} ${pct(i)}%`);
-    for (let i = 0; i < result.numFixed;    i++) usageParts.push(`FIX${i} ${pct(result.numGenerate + i)}%`);
+    for (let i = 0; i < result.palettes.length; i++) usageParts.push(`${palLabel(i)} ${pct(i)}%`);
     console.log(`\nTile usage: ${usageParts.join('  ')}  (${total} tiles)`);
 
     console.log(`\nSaved → ${OUT_DIR}/output.png  output_preview.png  debug.png`);
@@ -145,8 +175,7 @@ async function main() {
     // Build and save palette report
     const reportLines = [];
     for (let pi = 0; pi < result.palettes.length; pi++) {
-        const isGen  = pi < result.numGenerate;
-        const label  = isGen ? `GEN${pi}` : `FIX${pi - result.numGenerate}`;
+        const label  = palLabel(pi);
         const pal    = result.palettes[pi];
         const used   = result.colorUsed[pi];
         const count  = used.slice(1).reduce((s, v) => s + v, 0);

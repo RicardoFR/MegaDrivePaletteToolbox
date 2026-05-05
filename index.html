@@ -208,6 +208,64 @@ body {
 #card-input { width: 100%; }
 .pal-card   { flex: 0 0 calc(25% - 8px); min-width: 0; }
 
+/* ── Split palette controls ──────────────────────────────────────────────── */
+.split-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    position: relative;
+    z-index: 1;
+}
+
+.split-toggle {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--on-surf-var);
+    cursor: pointer;
+    user-select: none;
+    pointer-events: all;
+}
+
+.split-toggle input[type=checkbox] {
+    cursor: pointer;
+    accent-color: var(--primary);
+    width: 13px;
+    height: 13px;
+    pointer-events: all;
+}
+
+.split-count {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    color: var(--on-surf-var);
+}
+
+.split-count input[type=number] {
+    width: 38px;
+    background: var(--surf-high);
+    border: 1px solid var(--outline);
+    border-radius: var(--shape-xs);
+    color: var(--on-surface);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 3px 5px;
+    text-align: center;
+    outline: none;
+    pointer-events: all;
+}
+
+.split-count input[type=number]:focus {
+    border-color: var(--primary);
+}
+
 
 /* ── Resize card ─────────────────────────────────────────────────────────── */
 .resize-card {
@@ -416,6 +474,100 @@ button:disabled { opacity: 0.38; cursor: default; pointer-events: none; }
 /* ── Progress ────────────────────────────────────────────────────────────── */
 .progress-wrap { margin-bottom: 4px; }
 
+/* ── Log sidebar (left) ───────────────────────────────────────────────────── */
+.log-sidebar {
+    position: fixed;
+    top: 64px;          /* below top bar */
+    left: 0;
+    bottom: 0;
+    width: 560px;
+    background: #0D0E11;
+    border-right: 1px solid var(--outline-var);
+    display: flex;
+    flex-direction: column;
+    z-index: 100;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+}
+
+.log-sidebar.open { transform: translateX(0); }
+
+.log-sidebar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--outline-var);
+    flex-shrink: 0;
+}
+
+.log-sidebar-title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--outline);
+    font-family: var(--mono);
+}
+
+.log-sidebar-clear {
+    font-size: 10px;
+    color: var(--outline);
+    cursor: pointer;
+    background: none;
+    border: none;
+    padding: 2px 6px;
+    font-family: var(--mono);
+    border-radius: var(--shape-xs);
+}
+.log-sidebar-clear:hover { color: var(--on-surf-var); background: var(--surf-high); }
+
+.log-lines {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 14px;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.8;
+    color: #9CA3AF;
+    scrollbar-width: thin;
+    scrollbar-color: var(--outline-var) transparent;
+}
+
+.log-line { white-space: pre-wrap; word-break: break-all; }
+.log-line.info  { color: #9CA3AF; }
+.log-line.ok    { color: #6FCF97; }
+.log-line.warn  { color: #FCD34D; }
+.log-line.error { color: #F87171; font-weight: 700; }
+
+/* Tab to toggle the sidebar */
+.log-tab {
+    position: fixed;
+    top: 50%;
+    left: 0;
+    transform: translateY(-50%);
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    background: var(--surf-high);
+    border: 1px solid var(--outline-var);
+    border-left: none;
+    border-radius: 0 var(--shape-xs) var(--shape-xs) 0;
+    padding: 10px 6px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--outline);
+    cursor: pointer;
+    font-family: var(--mono);
+    z-index: 101;
+    transition: left 0.22s ease, color 0.15s;
+    user-select: none;
+}
+
+.log-tab:hover { color: var(--on-surf-var); }
+.log-tab.open  { left: 560px; }
+
 .progress-bar {
     height: 4px;
     background: var(--surf-highest);
@@ -603,7 +755,7 @@ button:disabled { opacity: 0.38; cursor: default; pointer-events: none; }
 <div class="top-bar">
     <div class="top-bar-icon">MD</div>
     <span class="top-bar-title">Mega Drive Palette Toolbox</span>
-    <span class="top-bar-sub">8&times;8 tiles &middot; 4 palettes &middot; OKLab &middot; WuQuant</span>
+    <span class="top-bar-sub">8&times;8 tiles &middot; 4 palettes &middot; OKLab &middot; WuQuant &middot; AI seg</span>
 </div>
 
 <div class="main">
@@ -621,29 +773,65 @@ button:disabled { opacity: 0.38; cursor: default; pointer-events: none; }
                 </div>
             </div>
             <div class="input-row">
-                <div class="input-card pal-card" id="zone-pal0" onclick="document.getElementById('fi-pal0').click()">
+                <div class="input-card pal-card" id="zone-pal0" onclick="palCardClick(event,0)">
                     <input type="file" id="fi-pal0" accept="image/*" style="display:none">
                     <label>PAL 0</label>
                     <div class="pal-canvas-wrap"><canvas id="cv-pal0" style="display:none"></canvas></div>
                     <span class="hint" id="hint-pal0">click or drop</span>
+                    <div class="split-row" id="split-row0" style="display:none">
+                        <label class="split-toggle" onclick="event.stopPropagation()">
+                            <input type="checkbox" id="cb-split0" onchange="onSplitToggle(0)"> Split
+                        </label>
+                        <div class="split-count" id="split-count0" style="display:none">
+                            <input type="number" id="inp-split0" min="1" max="14" value="8" onclick="event.stopPropagation()">
+                            <span>reserved</span>
+                        </div>
+                    </div>
                 </div>
-                <div class="input-card pal-card" id="zone-pal1" onclick="document.getElementById('fi-pal1').click()">
+                <div class="input-card pal-card" id="zone-pal1" onclick="palCardClick(event,1)">
                     <input type="file" id="fi-pal1" accept="image/*" style="display:none">
                     <label>PAL 1</label>
                     <div class="pal-canvas-wrap"><canvas id="cv-pal1" style="display:none"></canvas></div>
                     <span class="hint" id="hint-pal1">click or drop</span>
+                    <div class="split-row" id="split-row1" style="display:none">
+                        <label class="split-toggle" onclick="event.stopPropagation()">
+                            <input type="checkbox" id="cb-split1" onchange="onSplitToggle(1)"> Split
+                        </label>
+                        <div class="split-count" id="split-count1" style="display:none">
+                            <input type="number" id="inp-split1" min="1" max="14" value="8" onclick="event.stopPropagation()">
+                            <span>reserved</span>
+                        </div>
+                    </div>
                 </div>
-                <div class="input-card pal-card" id="zone-pal2" onclick="document.getElementById('fi-pal2').click()">
+                <div class="input-card pal-card" id="zone-pal2" onclick="palCardClick(event,2)">
                     <input type="file" id="fi-pal2" accept="image/*" style="display:none">
                     <label>PAL 2</label>
                     <div class="pal-canvas-wrap"><canvas id="cv-pal2" style="display:none"></canvas></div>
                     <span class="hint" id="hint-pal2">click or drop</span>
+                    <div class="split-row" id="split-row2" style="display:none">
+                        <label class="split-toggle" onclick="event.stopPropagation()">
+                            <input type="checkbox" id="cb-split2" onchange="onSplitToggle(2)"> Split
+                        </label>
+                        <div class="split-count" id="split-count2" style="display:none">
+                            <input type="number" id="inp-split2" min="1" max="14" value="8" onclick="event.stopPropagation()">
+                            <span>reserved</span>
+                        </div>
+                    </div>
                 </div>
-                <div class="input-card pal-card" id="zone-pal3" onclick="document.getElementById('fi-pal3').click()">
+                <div class="input-card pal-card" id="zone-pal3" onclick="palCardClick(event,3)">
                     <input type="file" id="fi-pal3" accept="image/*" style="display:none">
                     <label>PAL 3</label>
                     <div class="pal-canvas-wrap"><canvas id="cv-pal3" style="display:none"></canvas></div>
                     <span class="hint" id="hint-pal3">click or drop</span>
+                    <div class="split-row" id="split-row3" style="display:none">
+                        <label class="split-toggle" onclick="event.stopPropagation()">
+                            <input type="checkbox" id="cb-split3" onchange="onSplitToggle(3)"> Split
+                        </label>
+                        <div class="split-count" id="split-count3" style="display:none">
+                            <input type="number" id="inp-split3" min="1" max="14" value="8" onclick="event.stopPropagation()">
+                            <span>reserved</span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -760,6 +948,8 @@ button:disabled { opacity: 0.38; cursor: default; pointer-events: none; }
                     <option value="pngquant">PNGQuant</option>
                 </select>
             </div>
+
+
         </div>
     </div>
 
@@ -800,14 +990,76 @@ button:disabled { opacity: 0.38; cursor: default; pointer-events: none; }
 
 </div><!-- /.main -->
 
+<!-- ── Log sidebar ── -->
+<div class="log-sidebar open" id="log-sidebar">
+    <div class="log-sidebar-header">
+        <span class="log-sidebar-title">Console</span>
+        <button class="log-sidebar-clear" onclick="clearLog()">clear</button>
+    </div>
+    <div class="log-lines" id="log-lines"></div>
+</div>
+<div class="log-tab open" id="log-tab" onclick="toggleLog()">Log</div>
+
 <script>
 // ── State ────────────────────────────────────────────────────────────────── //
 const state = {
     inputData: null,
     palColors: [null, null, null, null],   // one entry per fixed palette slot
     worker:    null,
+    segWorker: null,
     result:    null,
 };
+
+// ── Log console ───────────────────────────────────────────────────────────── //
+function toggleLog() {
+    const sidebar = document.getElementById('log-sidebar');
+    const tab     = document.getElementById('log-tab');
+    sidebar.classList.toggle('open');
+    tab.classList.toggle('open');
+}
+
+function clearLog() {
+    document.getElementById('log-lines').innerHTML = '';
+}
+
+function log(text, level = 'info') {
+    const el = document.getElementById('log-lines');
+    const now = new Date();
+    const ts  = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+    const line = document.createElement('div');
+    line.className = `log-line ${level}`;
+    line.textContent = `${ts}  ${text}`;
+    el.appendChild(line);
+    el.scrollTop = el.scrollHeight;
+}
+
+// Intercept unhandled errors and console.error so they show in the log too
+window.addEventListener('error', e => log(`UNCAUGHT: ${e.message} (${e.filename}:${e.lineno})`, 'error'));
+window.addEventListener('unhandledrejection', e => log(`UNHANDLED REJECTION: ${e.reason}`, 'error'));
+const _origError = console.error.bind(console);
+console.error = (...args) => { _origError(...args); log('console.error: ' + args.join(' '), 'error'); };
+
+// ── Split palette helpers ─────────────────────────────────────────────────── //
+function isSplit(slot) {
+    return document.getElementById(`cb-split${slot}`).checked;
+}
+
+function getSplitReserved(slot) {
+    return Math.max(1, Math.min(14, parseInt(document.getElementById(`inp-split${slot}`).value) || 8));
+}
+
+function onSplitToggle(slot) {
+    const on = document.getElementById(`cb-split${slot}`).checked;
+    document.getElementById(`split-count${slot}`).style.display = on ? '' : 'none';
+    updateGenerateMax();
+    checkReady();
+}
+
+// Clicking the card opens file picker only if clicking outside the split controls
+function palCardClick(event, slot) {
+    if (event.target.closest('.split-row')) return;
+    document.getElementById(`fi-pal${slot}`).click();
+}
 
 // ── Fixed palette management ─────────────────────────────────────────────── //
 async function handlePaletteFile(slot, file) {
@@ -817,7 +1069,9 @@ async function handlePaletteFile(slot, file) {
         document.getElementById(`cv-${name}`).style.display   = 'block';
         document.getElementById(`hint-${name}`).style.display = 'none';
         document.getElementById(`zone-${name}`).classList.add('loaded');
+        document.getElementById(`split-row${slot}`).style.display = '';
         state.palColors[slot] = extractPaletteColors(imageData);
+        log(`PAL${slot} loaded: ${file.name}`, 'ok');
         updateGenerateMax();
         checkReady();
     } catch (err) { console.error(err); }
@@ -853,8 +1107,12 @@ function updateDitherUI() {
 }
 
 function updateGenerateMax() {
-    const loadedFixed = state.palColors.filter(c => c !== null).length;
-    const maxGen = Math.min(4, Math.max(0, 4 - loadedFixed));
+    // Split palettes consume a palette slot (they become "partial" palettes)
+    let usedSlots = 0;
+    for (let i = 0; i < 4; i++) {
+        if (state.palColors[i] !== null) usedSlots++;
+    }
+    const maxGen = Math.min(4, Math.max(0, 4 - usedSlots));
     const sl = document.getElementById('sl-generate');
     sl.max = maxGen;
     if (parseInt(sl.value) > maxGen) {
@@ -931,6 +1189,7 @@ async function handleInputFile(file) {
         document.getElementById('card-input').classList.add('loaded');
         state.inputData = imageData;
         showResizeSection(imageData.width, imageData.height);
+        log(`Input loaded: ${file.name}  ${imageData.width}×${imageData.height}`, 'ok');
         checkReady();
     } catch (err) { console.error(err); }
 }
@@ -987,7 +1246,8 @@ function getResizedImageData() {
 
 // ── Processing ────────────────────────────────────────────────────────────── //
 document.getElementById('btn-run').addEventListener('click', () => {
-    if (state.worker) state.worker.terminate();
+    if (state.worker)    state.worker.terminate();
+    if (state.segWorker) state.segWorker.terminate();
 
     const btn = document.getElementById('btn-run');
     btn.disabled = true;
@@ -995,45 +1255,119 @@ document.getElementById('btn-run').addEventListener('click', () => {
     document.getElementById('prog-fill').style.width = '0%';
     document.getElementById('status-text').textContent = '';
 
-    state.worker = new Worker('worker.js');
+    log('── Run ──────────────────────────', 'info');
 
-    state.worker.onmessage = e => {
-        const msg = e.data;
-        if (msg.type === 'progress') {
-            document.getElementById('prog-fill').style.width = msg.pct + '%';
-            document.getElementById('status-text').textContent = msg.text;
-        } else if (msg.type === 'done') {
-            onResult(msg);
-            btn.disabled = false;
-        } else if (msg.type === 'error') {
-            document.getElementById('status-text').textContent = '✗ ' + msg.message;
-            btn.disabled = false;
+    const imageData    = getResizedImageData();
+    const numGenerate  = parseInt(document.getElementById('sl-generate').value);
+    const fixedPaletteColors    = [];
+    const partialPaletteConfigs = [];
+    for (let i = 0; i < 4; i++) {
+        if (state.palColors[i] === null) continue;
+        if (isSplit(i)) {
+            const n = getSplitReserved(i);
+            partialPaletteConfigs.push({ colors: state.palColors[i].slice(0, n) });
+        } else {
+            fixedPaletteColors.push(state.palColors[i]);
         }
+    }
+
+    const numPartial = partialPaletteConfigs.length;
+    const numActive  = numGenerate + numPartial;
+
+    log(`Image: ${imageData.width}×${imageData.height}  gen:${numGenerate}  partial:${numPartial}  active:${numActive}`);
+
+    const options = {
+        W:              imageData.width,
+        H:              imageData.height,
+        ditherMode:     document.getElementById('sel-dither-mode').value,
+        ditherStrength: parseInt(document.getElementById('sl-dither').value),
+        residualThr:    Math.sqrt(parseInt(document.getElementById('sl-residual').value)),
+        maxIter:        parseInt(document.getElementById('sl-iter').value),
+        fixedBias:      parseInt(document.getElementById('sl-fixed-bias').value) / 100,
+        doSmooth:       document.getElementById('cb-smooth').checked,
+        quantMethod:    document.getElementById('sel-quant-method').value,
+        quantDistance:  document.getElementById('sel-quant-distance').value,
     };
 
-    state.worker.onerror = err => {
-        document.getElementById('status-text').textContent = '✗ Error: ' + err.message;
-        btn.disabled = false;
-    };
+    function runMainWorker(tileSemanticGroups) {
+        log(`worker.js starting…  input: ${imageData.width}×${imageData.height}`);
+        state.worker = new Worker('worker.js');
 
-    const imageData = getResizedImageData();
-    state.worker.postMessage({
-        inputData:          imageData.data,
-        fixedPaletteColors: state.palColors.filter(c => c !== null),
-        numGenerate:        parseInt(document.getElementById('sl-generate').value),
-        options: {
-            W:              imageData.width,
-            H:              imageData.height,
-            ditherMode:     document.getElementById('sel-dither-mode').value,
-            ditherStrength: parseInt(document.getElementById('sl-dither').value),
-            residualThr:    Math.sqrt(parseInt(document.getElementById('sl-residual').value)),
-            maxIter:        parseInt(document.getElementById('sl-iter').value),
-            fixedBias:      parseInt(document.getElementById('sl-fixed-bias').value) / 100,
-            doSmooth:       document.getElementById('cb-smooth').checked,
-            quantMethod:    document.getElementById('sel-quant-method').value,
-            quantDistance:  document.getElementById('sel-quant-distance').value,
-        },
-    });
+        const effectiveOptions = options;
+
+        state.worker.onmessage = e => {
+            const msg = e.data;
+            if (msg.type === 'progress') {
+                const pct = tileSemanticGroups ? 50 + (msg.pct * 0.5 | 0) : msg.pct;
+                document.getElementById('prog-fill').style.width = pct + '%';
+                document.getElementById('status-text').textContent = msg.text;
+                log(msg.text);
+            } else if (msg.type === 'done') {
+                log(`Done  ${msg.W}×${msg.H}  ${msg.palettes.length} palettes`, 'ok');
+                onResult(msg);
+                btn.disabled = false;
+            } else if (msg.type === 'error') {
+                document.getElementById('status-text').textContent = '✗ ' + msg.message;
+                log('ERROR: ' + msg.message, 'error');
+                btn.disabled = false;
+            }
+        };
+
+        state.worker.onerror = err => {
+            document.getElementById('status-text').textContent = '✗ Error: ' + err.message;
+            log('WORKER ERROR: ' + err.message, 'error');
+            btn.disabled = false;
+        };
+
+        state.worker.postMessage({
+            inputData: imageData.data,
+            fixedPaletteColors,
+            partialPaletteConfigs,
+            tileSemanticGroups: tileSemanticGroups || null,
+            numGenerate,
+            options: effectiveOptions,
+        });
+    }
+
+    if (true) {
+        // Phase 1: semantic segmentation in module worker
+        log('seg-worker.js starting…');
+        state.segWorker = new Worker('seg-worker.js', { type: 'module' });
+
+        state.segWorker.onmessage = e => {
+            const msg = e.data;
+            if (msg.type === 'progress') {
+                document.getElementById('prog-fill').style.width = (msg.pct * 0.5 | 0) + '%';
+                document.getElementById('status-text').textContent = msg.text;
+                log(`[seg] ${msg.text}`);
+            } else if (msg.type === 'done') {
+                document.getElementById('prog-fill').style.width = '50%';
+                document.getElementById('status-text').textContent = 'Segmentation done — building palettes…';
+                log(`Segmentation done — ${numActive} groups — handing off`, 'ok');
+                state.segWorker.terminate();
+                runMainWorker(msg.tileGroup);
+            } else if (msg.type === 'error') {
+                document.getElementById('status-text').textContent = '✗ Segmentation error: ' + msg.message + ' — running without AI';
+                log('SEG ERROR: ' + msg.message + ' (falling back)', 'error');
+                state.segWorker.terminate();
+                runMainWorker(null);
+            }
+        };
+
+        state.segWorker.onerror = err => {
+            document.getElementById('status-text').textContent = '✗ Seg worker error: ' + err.message + ' — running without AI';
+            log('SEG WORKER ERROR: ' + err.message + ' (falling back)', 'error');
+            state.segWorker.terminate();
+            runMainWorker(null);
+        };
+
+        state.segWorker.postMessage({
+            imageData: imageData.data,
+            W:         imageData.width,
+            H:         imageData.height,
+            numGroups: numActive,
+        });
+    }
 });
 
 function onResult(msg) {
@@ -1062,6 +1396,12 @@ function onResult(msg) {
     const statsEl = document.createElement('div');
     statsEl.className = 'palette-stats';
 
+    function palLabel(msg, pi) {
+        if (pi < msg.numGenerate) return `GEN${pi}`;
+        if (pi < msg.numGenerate + (msg.numPartial || 0)) return `PART${pi - msg.numGenerate}`;
+        return `FIX${pi - msg.numGenerate - (msg.numPartial || 0)}`;
+    }
+
     // Stacked bar
     const totalBar = document.createElement('div');
     totalBar.className = 'usage-total-bar';
@@ -1070,15 +1410,14 @@ function onResult(msg) {
         seg.className   = 'usage-total-segment';
         seg.style.flex  = msg.usage[pi];
         seg.style.background = PAL_COLORS[pi % PAL_COLORS.length].bg;
-        const label = pi < msg.numGenerate ? `GEN${pi}` : `FIX${pi - msg.numGenerate}`;
-        seg.title = `${label} ${pct(pi)}%`;
+        seg.title = `${palLabel(msg, pi)} ${pct(pi)}%`;
         totalBar.appendChild(seg);
     }
     statsEl.appendChild(totalBar);
 
     // Per-palette rows
     for (let pi = 0; pi < msg.palettes.length; pi++) {
-        const label = pi < msg.numGenerate ? `GEN${pi}` : `FIX${pi - msg.numGenerate}`;
+        const label = palLabel(msg, pi);
         const pal   = msg.palettes[pi];
         const c     = PAL_COLORS[pi % PAL_COLORS.length];
 
@@ -1128,7 +1467,7 @@ function onResult(msg) {
     const grid = document.createElement('div');
     grid.className = 'pal-report-grid';
     for (let pi = 0; pi < msg.palettes.length; pi++) {
-        const label = pi < msg.numGenerate ? `GEN${pi}` : `FIX${pi - msg.numGenerate}`;
+        const label = palLabel(msg, pi);
         const pal   = msg.palettes[pi];
         const used  = msg.colorUsed[pi];
         const count = Array.from(used).slice(1).filter(Boolean).length;
@@ -1181,7 +1520,7 @@ function buildReportText(msg) {
     const pct   = i => total ? Math.round(100 * msg.usage[i] / total) : 0;
     const lines = [];
     for (let pi = 0; pi < msg.palettes.length; pi++) {
-        const label = pi < msg.numGenerate ? `GEN${pi}` : `FIX${pi - msg.numGenerate}`;
+        const label = palLabel(msg, pi);
         const pal   = msg.palettes[pi];
         const used  = msg.colorUsed[pi];
         const count = Array.from(used).slice(1).filter(Boolean).length;

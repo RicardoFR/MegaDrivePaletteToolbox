@@ -202,6 +202,48 @@ function wuQuantMD(samples, k, rng, quantMethod, quantDistance) {
     return palette.getPointContainer().getPointArray().map(p => [p.r, p.g, p.b]);
 }
 
+// ── Build partial palette: forced fixed colors + WuQuant fill ────────────── //
+// reservedColors: [[r,g,b]] — always included (snapped to MD grid, in order)
+// samples: pixels to generate fill colors from
+// Remaining slots (up to 15) are filled with WuQuant on pixels not already
+// covered by the reserved colors.
+function buildPartialPal(reservedColors, samples, rng, thr2, quantMethod, quantDistance) {
+    const MAX_SAMPLES = 8000;
+    let s = samples;
+    if (samples.length > MAX_SAMPLES) {
+        const step = Math.ceil(samples.length / MAX_SAMPLES);
+        s = samples.filter((_, i) => i % step === 0);
+    }
+
+    const seenKeys = new Set();
+    const unique   = [];
+
+    for (const raw of reservedColors) {
+        const c   = snapToMD(raw);
+        const key = c[0] * 65536 + c[1] * 256 + c[2];
+        if (!seenKeys.has(key) && unique.length < N_PAL_COLORS) {
+            seenKeys.add(key);
+            unique.push(c);
+        }
+    }
+
+    const k = N_PAL_COLORS - unique.length;
+    if (k > 0 && s.length > 0) {
+        const residual = thr2 > 0
+            ? s.filter(p => { for (const c of unique) if (coverDist2(p, c) <= thr2) return false; return true; })
+            : s;
+        const base = residual.length >= k ? residual : s;
+        for (const c of wuQuantMD(base, k, rng, quantMethod, quantDistance)) {
+            const key = c[0] * 65536 + c[1] * 256 + c[2];
+            if (!seenKeys.has(key)) { seenKeys.add(key); unique.push(c); }
+            if (unique.length === N_PAL_COLORS) break;
+        }
+    }
+
+    while (unique.length < N_PAL_COLORS) unique.push([0, 0, 0]);
+    return [[0, 0, 0], ...unique];
+}
+
 // ── Build palette: inherit useful fixed colors, fill rest with K-means ───── //
 //
 // Phase 1 — Inherit: fixed palette colors that cover samples within thr2 are
@@ -263,12 +305,16 @@ function buildPal0(samples, rng, inheritCandidates, thr2, quantMethod, quantDist
 }
 
 // ── Tile assignment ───────────────────────────────────────────────────────── //
-// A fixed palette only wins a tile if it beats the best generated palette by
-// at least 20%. This prevents fixed palettes from stealing tiles via marginal
-// color matches (e.g. a sprite palette's white snatching bright sky tiles).
-function assignTiles(imageData, palettes, W, H, numGenerate, fixedBias) {
+// A fixed palette only wins a tile if it beats the best no-bias palette by fixedBias.
+// When tileSemanticGroups is provided, the palette matching the tile's semantic group
+// gets a semanticBias discount (multiplied onto its distance), so it wins ties against
+// palettes that are only marginally better in colour distance.
+function assignTiles(imageData, palettes, W, H, numNoBias, fixedBias, tileSemanticGroups, semanticBias) {
     const TX = Math.floor(W / TILE), TY = Math.floor(H / TILE);
     const tileMap = new Uint8Array(TY * TX);
+    const hasSeg = tileSemanticGroups && tileSemanticGroups.length === TY * TX;
+    const sBias  = (hasSeg && semanticBias > 0) ? semanticBias : 0;
+
     for (let ty = 0; ty < TY; ty++) {
         for (let tx = 0; tx < TX; tx++) {
             const flat = [];
@@ -278,14 +324,18 @@ function assignTiles(imageData, palettes, W, H, numGenerate, fixedBias) {
                     flat.push(imageData[i], imageData[i + 1], imageData[i + 2]);
                 }
             }
-            let bestGenD = Infinity, bestGenPi = 0;
-            for (let pi = 0; pi < numGenerate; pi++) {
-                const d = tileDist(palettes[pi], flat);
-                if (d < bestGenD) { bestGenD = d; bestGenPi = pi; }
+            const segGroup = hasSeg ? tileSemanticGroups[ty * TX + tx] : -1;
+
+            let bestNoBiasD = Infinity, bestNoBiasPi = 0;
+            for (let pi = 0; pi < numNoBias; pi++) {
+                let d = tileDist(palettes[pi], flat);
+                if (sBias > 0 && pi === segGroup) d *= (1 - sBias);
+                if (d < bestNoBiasD) { bestNoBiasD = d; bestNoBiasPi = pi; }
             }
-            let minD = bestGenD, minPi = bestGenPi;
-            for (let pi = numGenerate; pi < palettes.length; pi++) {
-                const d = tileDist(palettes[pi], flat);
+            let minD = bestNoBiasD, minPi = bestNoBiasPi;
+            for (let pi = numNoBias; pi < palettes.length; pi++) {
+                let d = tileDist(palettes[pi], flat);
+                if (sBias > 0 && pi === segGroup) d *= (1 - sBias);
                 if (d < minD * fixedBias) { minD = d; minPi = pi; }
             }
             tileMap[ty * TX + tx] = minPi;
@@ -295,12 +345,11 @@ function assignTiles(imageData, palettes, W, H, numGenerate, fixedBias) {
 }
 
 // ── Row-majority palette enforcement ─────────────────────────────────────── //
-// For each tile row, all tiles are assigned to whichever palette wins the most
-// tiles in that row — but only if the winner doesn't produce significantly worse
-// rendering than the current per-tile assignment. This prevents forcing a
-// sky palette onto rows that also contain trees or ground.
-function enforceRowMajority(tileMap, imageData, palettes, TX, TY, W) {
-    const m = new Uint8Array(tileMap);
+// Skips forcing any tile whose semantic group differs from the row winner's group —
+// boundary tiles (e.g. a character tile in a sky row) keep their correct palette.
+function enforceRowMajority(tileMap, imageData, palettes, TX, TY, W, tileSemanticGroups, numNoBias) {
+    const m      = new Uint8Array(tileMap);
+    const hasSeg = tileSemanticGroups && tileSemanticGroups.length === TY * TX;
 
     function rowTileDist(ty, pi) {
         let sum = 0;
@@ -324,14 +373,11 @@ function enforceRowMajority(tileMap, imageData, palettes, TX, TY, W) {
         }
         const sorted = Object.entries(votes).sort((a, b) => b[1] - a[1]);
         const winner = parseInt(sorted[0][0]);
-
-        // Already uniform — nothing to do.
         if (sorted.length === 1) continue;
 
-        // Measure rendering quality: current mixed vs forced winner.
         let mixedDist = 0;
         for (let tx = 0; tx < TX; tx++) {
-            const pi = m[ty * TX + tx];
+            const pi   = m[ty * TX + tx];
             const flat = [];
             for (let dy = 0; dy < TILE; dy++)
                 for (let dx = 0; dx < TILE; dx++) {
@@ -342,12 +388,7 @@ function enforceRowMajority(tileMap, imageData, palettes, TX, TY, W) {
         }
         const winnerDist = rowTileDist(ty, winner);
 
-        // Only enforce if:
-        // 1. Winner has a clear majority (>60% of tiles in the row)
-        // 2. Winner's quality is within 10% of the per-tile optimal
-        // 3. No individual tile would be degraded more than 2x
-        const winnerVotes = votes[winner];
-        const majority = winnerVotes / TX;
+        const majority = votes[winner] / TX;
         if (majority <= 0.6 || winnerDist > mixedDist * 1.10) continue;
 
         let worstTileRatio = 1.0;
@@ -364,16 +405,25 @@ function enforceRowMajority(tileMap, imageData, palettes, TX, TY, W) {
             const winD = tileDist(palettes[winner], flat);
             if (curD > 0) worstTileRatio = Math.max(worstTileRatio, winD / curD);
         }
-        if (worstTileRatio <= 2.0) {
-            for (let tx = 0; tx < TX; tx++) m[ty * TX + tx] = winner;
+        if (worstTileRatio > 2.0) continue;
+
+        // Enforce winner, but skip tiles whose semantic group differs from winner's group.
+        // Winner palette i < numNoBias was built for group i; fixed palettes have no group.
+        for (let tx = 0; tx < TX; tx++) {
+            if (hasSeg && winner < numNoBias && tileSemanticGroups[ty * TX + tx] !== winner) continue;
+            m[ty * TX + tx] = winner;
         }
     }
     return m;
 }
 
 // ── Smooth tile map: remove palette islands (4-neighbor) ─────────────────── //
-function smoothTileMap(tileMap, imageData, palettes, TX, TY, W) {
-    const m = new Uint8Array(tileMap);
+// When tileSemanticGroups is provided, a tile will not be forced to switch if its
+// semantic group differs from the candidate — this preserves boundary tiles
+// (e.g. a character surrounded by sky) on their correct palette.
+function smoothTileMap(tileMap, imageData, palettes, TX, TY, W, tileSemanticGroups, numNoBias) {
+    const m      = new Uint8Array(tileMap);
+    const hasSeg = tileSemanticGroups && tileSemanticGroups.length === TY * TX;
 
     function getTileFlat(ty, tx) {
         const flat = [];
@@ -389,16 +439,15 @@ function smoothTileMap(tileMap, imageData, palettes, TX, TY, W) {
         let changed = false;
         for (let ty = 0; ty < TY; ty++) {
             for (let tx = 0; tx < TX; tx++) {
-                const pi = m[ty * TX + tx];
+                const pi    = m[ty * TX + tx];
+                const piSeg = hasSeg ? tileSemanticGroups[ty * TX + tx] : -1;
 
-                // Collect all 4 neighbors (skip out-of-bounds)
                 const neighbors = [];
                 if (ty > 0)      neighbors.push(m[(ty - 1) * TX + tx]);
                 if (ty < TY - 1) neighbors.push(m[(ty + 1) * TX + tx]);
                 if (tx > 0)      neighbors.push(m[ty * TX + (tx - 1)]);
                 if (tx < TX - 1) neighbors.push(m[ty * TX + (tx + 1)]);
 
-                // Count how many neighbors agree on a single different palette
                 const votes = {};
                 for (const n of neighbors) {
                     if (n !== pi) votes[n] = (votes[n] || 0) + 1;
@@ -408,10 +457,13 @@ function smoothTileMap(tileMap, imageData, palettes, TX, TY, W) {
 
                 const candidate = parseInt(best[0]);
                 const voteCount = best[1];
-                // Switch if majority of neighbors use a different palette.
-                // Tolerance scales with isolation: a tile surrounded on all sides
-                // is forced to match (high tolerance) to eliminate palette islands.
-                const tolerance = voteCount >= 4 ? 4.0 : voteCount >= 3 ? 3.0 : voteCount >= 2 ? 1.6 : 1.4;
+
+                // Never pull a tile into a palette from a different semantic region.
+                // Palette i (i < numNoBias) was built for semantic group i.
+                // Fixed palettes (i >= numNoBias) have no group — allow those through.
+                if (hasSeg && candidate < numNoBias && candidate !== piSeg) continue;
+
+                const tolerance = voteCount >= 4 ? 2.0 : voteCount >= 3 ? 1.8 : voteCount >= 2 ? 1.4 : 1.2;
                 const flat = getTileFlat(ty, tx);
                 if (tileDist(palettes[candidate], flat) <= tileDist(palettes[pi], flat) * tolerance) {
                     m[ty * TX + tx] = candidate;
@@ -422,25 +474,25 @@ function smoothTileMap(tileMap, imageData, palettes, TX, TY, W) {
         if (!changed) break;
     }
 
-    // ── Final cleanup: remove remaining completely isolated tiles ─────────── //
-    // Tiles that survived the main loop are just outside the 4.0 tolerance.
-    // A second pass with a higher cap (8.0) catches these near-boundary cases
-    // and eliminates visible 8×8 squares without allowing truly wrong colours.
+    // ── Final cleanup: completely isolated tiles within the same semantic region //
     for (let ty = 0; ty < TY; ty++) {
         for (let tx = 0; tx < TX; tx++) {
             const pi        = m[ty * TX + tx];
+            const piSeg     = hasSeg ? tileSemanticGroups[ty * TX + tx] : -1;
             const neighbors = [];
-            if (ty > 0)      neighbors.push(m[(ty - 1) * TX + tx]);
-            if (ty < TY - 1) neighbors.push(m[(ty + 1) * TX + tx]);
-            if (tx > 0)      neighbors.push(m[ty * TX + (tx - 1)]);
-            if (tx < TX - 1) neighbors.push(m[ty * TX + (tx + 1)]);
-            if (neighbors.length < 4) continue; // only interior tiles
-            if (neighbors.every(n => n === neighbors[0]) && neighbors[0] !== pi) {
-                const candidate = neighbors[0];
-                const flat = getTileFlat(ty, tx);
-                if (tileDist(palettes[candidate], flat) <= tileDist(palettes[pi], flat) * 8.0) {
-                    m[ty * TX + tx] = candidate;
-                }
+            const nCoords   = [];
+            if (ty > 0)      { neighbors.push(m[(ty-1)*TX+tx]); nCoords.push([ty-1,tx]); }
+            if (ty < TY - 1) { neighbors.push(m[(ty+1)*TX+tx]); nCoords.push([ty+1,tx]); }
+            if (tx > 0)      { neighbors.push(m[ty*TX+(tx-1)]); nCoords.push([ty,tx-1]); }
+            if (tx < TX - 1) { neighbors.push(m[ty*TX+(tx+1)]); nCoords.push([ty,tx+1]); }
+            if (neighbors.length < 4) continue;
+            if (!neighbors.every(n => n === neighbors[0]) || neighbors[0] === pi) continue;
+            const candidate = neighbors[0];
+            // Don't cross semantic boundary
+            if (hasSeg && candidate < numNoBias && candidate !== piSeg) continue;
+            const flat = getTileFlat(ty, tx);
+            if (tileDist(palettes[candidate], flat) <= tileDist(palettes[pi], flat) * 2.0) {
+                m[ty * TX + tx] = candidate;
             }
         }
     }
@@ -660,23 +712,31 @@ function buildUsageStats(tileMap, outIdx, totalPalettes) {
 
 // ── Main pipeline (shared by CLI and browser) ─────────────────────────────── //
 //
-// fixedPaletteColors : [[r,g,b]×15][]  — array of fixed (input) palettes
-// numGenerate        : number          — how many palettes to generate (default 1)
-// deflate            : async (Uint8Array) => Uint8Array  — injected by caller
-// onProgress         : (pct, text) => void               — injected by caller
+// fixedPaletteColors  : [[r,g,b]×15][]  — array of fixed (input) palettes
+// numGenerate         : number          — how many fully-generated palettes (default 1)
+// partialPaletteConfigs: [{colors:[[r,g,b]], reserveSlots:number}]
+//   — palettes where `colors` are locked and remaining slots are auto-generated.
+//     The palette appears in the output after fixed palettes.
+// tileSemanticGroups  : Uint8Array(TY*TX) | null — optional per-tile semantic group 0..numGenerate-1
+//   — when provided, each generated palette i is seeded only from tiles in group i,
+//     giving semantically coherent initial palettes instead of luminosity buckets.
+// deflate             : async (Uint8Array) => Uint8Array  — injected by caller
+// onProgress          : (pct, text) => void               — injected by caller
 //
 // Output palette order in the indexed PNG:
-//   slots 0..numGenerate-1          → generated palettes
-//   slots numGenerate..total-1      → fixed palettes (same order as input)
+//   slots 0..numGenerate-1              → generated palettes
+//   slots numGenerate..                 → fixed palettes (same order as input)
+//   slots after fixed..                 → partial palettes (same order as input)
 //
-async function processImage({ inputData, fixedPaletteColors, numGenerate, W, H, ditherStrength, ditherMode, residualThr, maxIter, doSmooth, fixedBias, seed, quantMethod, quantDistance }, deflate, onProgress) {
+async function processImage({ inputData, fixedPaletteColors, numGenerate, partialPaletteConfigs, tileSemanticGroups, W, H, ditherStrength, ditherMode, residualThr, maxIter, doSmooth, fixedBias, seed, quantMethod, quantDistance }, deflate, onProgress) {
     if (fixedBias === undefined) fixedBias = 0.8;
     const rng = makePrng(seed !== undefined ? seed : 1);
     if (!numGenerate || numGenerate < 0) numGenerate = 0;
-    const fixedPalettes = (fixedPaletteColors || []).map(cols => [[0, 0, 0], ...cols]);
-    numGenerate = Math.min(numGenerate, Math.max(0, 4 - fixedPalettes.length));
-    if (numGenerate === 0 && fixedPalettes.length === 0) numGenerate = 1;
-    const totalPalettes = numGenerate + fixedPalettes.length;
+    const fixedPalettes   = (fixedPaletteColors || []).map(cols => [[0, 0, 0], ...cols]);
+    const partialConfigs  = (partialPaletteConfigs || []).filter(c => c && c.colors && c.colors.length > 0);
+    numGenerate = Math.min(numGenerate, Math.max(0, 4 - fixedPalettes.length - partialConfigs.length));
+    if (numGenerate === 0 && fixedPalettes.length === 0 && partialConfigs.length === 0) numGenerate = 1;
+    const totalPalettes = numGenerate + fixedPalettes.length + partialConfigs.length;
     const thr2 = residualThr * residualThr;
     const allFixedColors = fixedPalettes.flatMap(pal => pal.slice(1));
 
@@ -689,45 +749,194 @@ async function processImage({ inputData, fixedPaletteColors, numGenerate, W, H, 
             for (let j = 1; j < pal.length; j++) if (coverDist2(p, pal[j]) <= thr2) return false;
         return true;
     });
-    const initSamples = residualPixels.length >= N_PAL_COLORS ? residualPixels : allPixels;
+    const TX0 = Math.floor(W / TILE);
+    const TY0 = Math.floor(H / TILE);
+    const numNoBias = numGenerate + partialConfigs.length;
+
+    // ── Semantic-balanced sampling (when AI groups provided) ──────────────── //
+    // Collect pixels per semantic group and resample so every group contributes
+    // equally to initSamples. This prevents large uniform regions (e.g. sky)
+    // from dominating the palette when only one active palette is being built.
+    function buildSemanticInitSamples(base) {
+        if (!tileSemanticGroups || tileSemanticGroups.length !== TY0 * TX0) return base;
+        const numGroups = Math.max(...tileSemanticGroups) + 1;
+        const buckets   = Array.from({ length: numGroups }, () => []);
+        for (let ty = 0; ty < TY0; ty++) {
+            for (let tx = 0; tx < TX0; tx++) {
+                const g = tileSemanticGroups[ty * TX0 + tx];
+                for (let dy = 0; dy < TILE; dy++) {
+                    for (let dx = 0; dx < TILE; dx++) {
+                        const i = ((ty * TILE + dy) * W + (tx * TILE + dx)) * 4;
+                        buckets[g].push([inputData[i], inputData[i + 1], inputData[i + 2]]);
+                    }
+                }
+            }
+        }
+        const perGroup = Math.max(N_PAL_COLORS, Math.ceil(base.length / numGroups));
+        const balanced = [];
+        for (const bucket of buckets) {
+            if (bucket.length === 0) continue;
+            const step = bucket.length > perGroup ? Math.floor(bucket.length / perGroup) : 1;
+            for (let i = 0; i < bucket.length && balanced.length < base.length; i += step)
+                balanced.push(bucket[i]);
+        }
+        return balanced.length >= N_PAL_COLORS ? balanced : base;
+    }
+
+    const rawInitSamples = residualPixels.length >= N_PAL_COLORS ? residualPixels : allPixels;
+    const initSamples    = buildSemanticInitSamples(rawInitSamples);
 
     // ── Initial palette generation ─────────────────────────────────────────── //
     let genPalettes = [];
     if (numGenerate > 0) {
         onProgress(15, `Building ${numGenerate} palette(s) (${residualPixels.length} residual px)...`);
-        const sorted = initSamples.slice().sort((a, b) => rgbToOklab(a[0], a[1], a[2])[0] - rgbToOklab(b[0], b[1], b[2])[0]);
-        const groupSize = Math.ceil(sorted.length / numGenerate);
-        genPalettes = Array.from({ length: numGenerate }, (_, g) => {
-            const group = sorted.slice(g * groupSize, (g + 1) * groupSize);
-            return buildPal0(group.length >= N_PAL_COLORS ? group : initSamples, rng, allFixedColors, thr2, quantMethod, quantDistance);
-        });
+
+        // When semantic tile groups are available, seed each generated palette from
+        // pixels belonging to its assigned semantic region instead of a luminosity bucket.
+        if (tileSemanticGroups && tileSemanticGroups.length === TY0 * TX0) {
+            const semanticSamples = Array.from({ length: numGenerate }, () => []);
+            for (let ty = 0; ty < TY0; ty++) {
+                for (let tx = 0; tx < TX0; tx++) {
+                    const g = Math.min(tileSemanticGroups[ty * TX0 + tx], numGenerate - 1);
+                    for (let dy = 0; dy < TILE; dy++) {
+                        for (let dx = 0; dx < TILE; dx++) {
+                            const i = ((ty * TILE + dy) * W + (tx * TILE + dx)) * 4;
+                            semanticSamples[g].push([inputData[i], inputData[i + 1], inputData[i + 2]]);
+                        }
+                    }
+                }
+            }
+            genPalettes = Array.from({ length: numGenerate }, (_, g) => {
+                const group = semanticSamples[g];
+                return buildPal0(group.length >= N_PAL_COLORS ? group : initSamples, rng, allFixedColors, thr2, quantMethod, quantDistance);
+            });
+        } else {
+            const sorted = initSamples.slice().sort((a, b) => rgbToOklab(a[0], a[1], a[2])[0] - rgbToOklab(b[0], b[1], b[2])[0]);
+            const groupSize = Math.ceil(sorted.length / numGenerate);
+            genPalettes = Array.from({ length: numGenerate }, (_, g) => {
+                const group = sorted.slice(g * groupSize, (g + 1) * groupSize);
+                return buildPal0(group.length >= N_PAL_COLORS ? group : initSamples, rng, allFixedColors, thr2, quantMethod, quantDistance);
+            });
+        }
     }
 
-    // ── Iterative refinement: assign tiles → rebuild palettes ─────────────── //
-    let palettes = [...genPalettes, ...fixedPalettes];
+    // ── Initial partial palettes (reserved colors + WuQuant fill on all pixels) //
+    // When semantic groups are available, seed each partial palette from its
+    // assigned group (groups numGenerate..numNoBias-1).
+    let partialPalettes = partialConfigs.map((cfg, g) => {
+        let samples = initSamples;
+        if (tileSemanticGroups && tileSemanticGroups.length === TY0 * TX0) {
+            const groupIdx = numGenerate + g;
+            const bucket = [];
+            for (let ty = 0; ty < TY0; ty++) {
+                for (let tx = 0; tx < TX0; tx++) {
+                    if (tileSemanticGroups[ty * TX0 + tx] !== groupIdx) continue;
+                    for (let dy = 0; dy < TILE; dy++) {
+                        for (let dx = 0; dx < TILE; dx++) {
+                            const i = ((ty * TILE + dy) * W + (tx * TILE + dx)) * 4;
+                            bucket.push([inputData[i], inputData[i + 1], inputData[i + 2]]);
+                        }
+                    }
+                }
+            }
+            if (bucket.length >= N_PAL_COLORS) samples = bucket;
+        }
+        return buildPartialPal(cfg.colors, samples, rng, thr2, quantMethod, quantDistance);
+    });
+
+    // ── Iterative refinement: assign tiles → rebuild gen + partial palettes ── //
+    // Palette order: [gen..., partial..., fixed...]
+    // assignTiles treats slots 0..numNoBias-1 as "no bias" (equal footing with generated),
+    // and slots numNoBias.. as fixed (need to beat generated by fixedBias to win a tile).
+    let palettes = [...genPalettes, ...partialPalettes, ...fixedPalettes];
     let tileMap, TX, TY;
 
-    for (let iter = 1; iter <= (numGenerate > 0 ? maxIter : 0); iter++) {
+    // Semantic bias: how strongly a tile prefers its semantic-matched palette.
+    // 0.25 = that palette's distance is multiplied by 0.75 (25% cheaper) before comparison.
+    const semanticBias = tileSemanticGroups ? 0.25 : 0;
+
+    const needIter = numNoBias > 0;
+    for (let iter = 1; iter <= (needIter ? maxIter : 0); iter++) {
         onProgress(15 + (iter / maxIter) * 55, `Iteration ${iter}/${maxIter}...`);
-        ({ tileMap, TX, TY } = assignTiles(inputData, palettes, W, H, numGenerate, fixedBias));
+        ({ tileMap, TX, TY } = assignTiles(inputData, palettes, W, H, numNoBias, fixedBias, tileSemanticGroups, semanticBias));
+
+        // Rebuild fully-generated palettes (slots 0..numGenerate-1)
         genPalettes = rebuildGenPalettes(genPalettes, collectGenPixels(tileMap, inputData, TX, TY, W, numGenerate), rng, allFixedColors, thr2, quantMethod, quantDistance);
-        palettes = [...genPalettes, ...fixedPalettes];
+
+        // Rebuild partial palettes (slots numGenerate..numNoBias-1)
+        const partialPixels = collectGenPixels(tileMap, inputData, TX, TY, W, numNoBias).slice(numGenerate);
+        partialPalettes = partialConfigs.map((cfg, g) => {
+            const px = partialPixels[g] || [];
+            return px.length >= N_PAL_COLORS
+                ? buildPartialPal(cfg.colors, px, rng, thr2, quantMethod, quantDistance)
+                : partialPalettes[g];
+        });
+
+        palettes = [...genPalettes, ...partialPalettes, ...fixedPalettes];
     }
 
-    // When numGenerate=0, the loop above never runs — still need an initial tile assignment.
+    // When no active palettes, the loop above never runs — still need initial tile assignment.
     if (!tileMap) {
         onProgress(70, 'Assigning tiles...');
-        ({ tileMap, TX, TY } = assignTiles(inputData, palettes, W, H, numGenerate, fixedBias));
+        ({ tileMap, TX, TY } = assignTiles(inputData, palettes, W, H, numNoBias, fixedBias, tileSemanticGroups, semanticBias));
     }
 
     // ── Spatial smoothing ──────────────────────────────────────────────────── //
     if (doSmooth) {
         onProgress(73, 'Enforcing row palette bands...');
-        tileMap = enforceRowMajority(tileMap, inputData, palettes, TX, TY, W);
+        tileMap = enforceRowMajority(tileMap, inputData, palettes, TX, TY, W, tileSemanticGroups, numNoBias);
         onProgress(77, 'Smoothing tile islands...');
-        tileMap = smoothTileMap(tileMap, inputData, palettes, TX, TY, W);
+        tileMap = smoothTileMap(tileMap, inputData, palettes, TX, TY, W, tileSemanticGroups, numNoBias);
+
         genPalettes = rebuildGenPalettes(genPalettes, collectGenPixels(tileMap, inputData, TX, TY, W, numGenerate), rng, allFixedColors, thr2, quantMethod, quantDistance);
-        palettes = [...genPalettes, ...fixedPalettes];
+
+        const partialPixelsS = collectGenPixels(tileMap, inputData, TX, TY, W, numNoBias).slice(numGenerate);
+        partialPalettes = partialConfigs.map((cfg, g) => {
+            const px = partialPixelsS[g] || [];
+            return px.length >= N_PAL_COLORS
+                ? buildPartialPal(cfg.colors, px, rng, thr2, quantMethod, quantDistance)
+                : partialPalettes[g];
+        });
+
+        palettes = [...genPalettes, ...partialPalettes, ...fixedPalettes];
+    }
+
+    // ── Tile corrector: fix worst tiles by trying all palettes ────────────── //
+    // For each tile, compare its current perceptual score against all other
+    // palettes. If any palette is meaningfully better, reassign the tile.
+    // Runs one final rebuild of gen/partial palettes after reassignment.
+    onProgress(78, 'Correcting tiles…');
+    let corrected = 0;
+    for (let ty = 0; ty < TY; ty++) {
+        for (let tx = 0; tx < TX; tx++) {
+            const flat = [];
+            for (let dy = 0; dy < TILE; dy++)
+                for (let dx = 0; dx < TILE; dx++) {
+                    const i = ((ty * TILE + dy) * W + (tx * TILE + dx)) * 4;
+                    flat.push(inputData[i], inputData[i + 1], inputData[i + 2]);
+                }
+            const cur  = tileMap[ty * TX + tx];
+            const curD = tileDist(palettes[cur], flat);
+            let bestD = curD, bestPi = cur;
+            for (let pi = 0; pi < palettes.length; pi++) {
+                if (pi === cur) continue;
+                const d = tileDist(palettes[pi], flat);
+                if (d < bestD) { bestD = d; bestPi = pi; }
+            }
+            if (bestPi !== cur) { tileMap[ty * TX + tx] = bestPi; corrected++; }
+        }
+    }
+    if (corrected > 0) {
+        // Rebuild palettes from corrected tile assignments
+        genPalettes = rebuildGenPalettes(genPalettes, collectGenPixels(tileMap, inputData, TX, TY, W, numGenerate), rng, allFixedColors, thr2, quantMethod, quantDistance);
+        const partialPixelsC = collectGenPixels(tileMap, inputData, TX, TY, W, numNoBias).slice(numGenerate);
+        partialPalettes = partialConfigs.map((cfg, g) => {
+            const px = partialPixelsC[g] || [];
+            return px.length >= N_PAL_COLORS
+                ? buildPartialPal(cfg.colors, px, rng, thr2, quantMethod, quantDistance)
+                : partialPalettes[g];
+        });
+        palettes = [...genPalettes, ...partialPalettes, ...fixedPalettes];
     }
 
     // ── Render + encode ────────────────────────────────────────────────────── //
@@ -750,11 +959,13 @@ async function processImage({ inputData, fixedPaletteColors, numGenerate, W, H, 
     const debugData  = buildDebugImage(tileMap, TX, TY, W, H, totalPalettes);
     const { usage, colorUsed } = buildUsageStats(tileMap, outIdx, totalPalettes);
 
+    // Reorder output to match expected: [gen, partial, fixed] — consistent with
+    // internal palette array order used during processing.
     return {
         outRgb, outIdx, indexedPng, debugData,
         generatedPaletteColors: genPalettes.map(p => p.slice(1)),
         usage, colorUsed, W, H,
-        numGenerate, numFixed: fixedPalettes.length,
+        numGenerate, numPartial: partialConfigs.length, numFixed: fixedPalettes.length,
         palettes,
     };
 }
